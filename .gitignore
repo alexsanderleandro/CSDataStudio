@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# CSData Studio específico
+*.log
+*.db
+*.sqlite
+saved_queries.json
+exports/
+logs/
+
+# Configurações sensíveis
+*.xml
+*.ini
+config.json
+.env
+
+# Temporários
+*.tmp
+*.bak
+*.backup
+temp/
+tmp/
+
+# Relatórios e gráficos gerados
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Cache
+.cache/
+.pytest_cache/

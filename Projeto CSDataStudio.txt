@@ -1,0 +1,302 @@
+#criar um aplicativo em python + pyqt5, que onde o usuário possa selecionar as tabelas que ele quer, campos que ele quer, fazendo join com inner , left ou right, e que o sistema identifique se as tabelas seleciondas possuem referência entre si (chaves) para correlacionar corretamente. as tabelas e views do banco de dados devem ser mostradas em listbox para selecionar as tabelas que ele quer, e em campo especifico, selecionar o join, se necessário.
+o aplicativo será tipo um BI, eu poderei gerar relatórios e gráficos baseados no resultado da consulta.
+eu poderei incluir a chave da openAI do usuário para poder solicitar analise e insights em cima do resultado, podendo imprimir e gerar PDF da resposta da AI.
+uma aba será de seleção de tabelas e campos para montar a view.
+segunda aba será para mostrar o resultado da view executada em formato de tabela, com colunas e campos, podendo ordenar crescente ou decrescente por coluna. poderá ser possível excluir uma ou varias colunas retornadas, bem como restaurar uma coluna que foi removida.
+terá botão para gerar insights com IA, gráfico, imprimir e exportar pdf. a impressão ou geração de pdf será definida pela seleção por meio de checkbox se incluirá insights (habilitado se gerado), se incluirá a tabela, se incluirá o gráfico (habilitado se gerado). a ordem para a impressão e pdf será: Insights, Gráfico, Resultado da query, se não for marcado, o item não aparecerá nem com o seu título, exemplo, marquei apenas insight e gráfico, não terá nada de Resultado da query.
+
+#tem que ter opção de fazer join com mais de duas tabelas, na verdade, com quantas o usuário selecionar, desde que haja referencia entre elas tem que ter opção para salvar a consulta com definiçao de nome obrigatório para posterior uso, podendo altera-la, sobrescrevendo, ou mesmo excluindo-a.
+
+ao abrir o app ele deverá ler o arquivo C:\CEOSoftware\CSLogin.xml que contém a informação do tipo de banco, nome do banco e nome do servidor sql que será acessado.
+ao confirmar o banco, estando acessível, abrir tela de login para informar o usuário e senha, devendo validar o usuário pela tabela usuários do banco selecionado, e a senha pela função csspvalidasenha.
+
+para gerar gráfico o usuário deverá sempre selecionar o campo para o eixo x e y, e se os valores serão count ou sum. o gráfico poderá ser de barra ou colunas.
+para gerar o relatório o usuário deverá montar o layout focando em folha padrão A4, podendo optar por modo paisagem ou retrato, definindo os campos que serão colunas, podendo definir a totalização soma ou count total e subtotal, se possível, marcando a coluna e selecionado em Listbox o tipo de totalização, podendo criar campo avulso de total ou subtotal, selecionado qual campo ele quer basear.
+
+cabeçalho é padrão com nome da empresa à esquerda. à direita e por linha: nome do aplicativo e versão, nome da pesquisa (obrigatório);
+rodapé é padrão com nome do usuário que gerou, data e hora, página x/x. abaixo o texto fixo:
+"Este relatório contém dados pessoais protegidos pela Lei n.º 13.709/18, cuja captação se deu de modo expressamente consentido, portanto, o acesso de qualquer pessoa sem
+autorização a este documento configurará violação legal, sujeitando o autor do fato à responsabilização civil e penal."
+
+tenho em mente os arquivos:
+authentication.py onde a logica de conexão ficará definida, exemplo:
+import os
+import pyodbc
+from typing import Optional, Dict
+
+ODBC_DRIVER = os.getenv("MSSQL_ODBC_DRIVER", "ODBC Driver 17 for SQL Server")
+DB_SERVER = os.getenv("MSSQL_SERVER", "CEOSOFT-SERV2")
+DB_NAME = os.getenv("MSSQL_DATABASE", "BDCEOSOFTWARE")
+
+
+def get_db_connection():
+    """
+    Retorna uma conexão pyodbc usando Windows Authentication (Trusted Connection).
+    O processo Python precisa executar com um usuário Windows que tenha acesso ao BD.
+    """
+
+    conn_str = (
+        "DRIVER={%s};" "SERVER=%s;" "DATABASE=%s;" "Trusted_Connection=yes;"
+    ) % (
+        ODBC_DRIVER,
+        DB_SERVER,
+        DB_NAME,
+    )
+
+    try:
+        print(f"[DEBUG] Abrindo conexão ODBC -> DRIVER={ODBC_DRIVER}; SERVER={DB_SERVER}")
+        print(f"[DEBUG] Abrindo conexão ODBC -> DATABASE={DB_NAME}")
+    except Exception:
+        pass
+
+    conn = pyodbc.connect(conn_str, autocommit=False)
+    return conn
+
+
+def verify_user(username: str, password: str) -> Optional[Dict]:
+    """
+    Verifica credenciais contra a tabela Usuarios.
+    Além de validar a senha (via stored procedure csspValidaSenha), exige que
+    o usuário tenha InativosN = 0 e PDVGerenteSN = 1.
+
+    Retorna dicionário do usuário (ex.: {'CodUsuario':..., 'NomeUsuario':..., 'InativosN':0, 'PDVGerenteSN':1})
+    em caso de sucesso, ou None se falhar.
+    """
+    print(f"Tentando autenticar usuário: {username}")
+    conn = None
+    cur = None
+    try:
+        print(f"Conectando ao banco de dados: {DB_SERVER}.{DB_NAME}")
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Executa a stored procedure que valida usuário/senha
+        try:
+            print(f"Executando stored procedure csspValidaSenha para: {username}")
+            cur.execute("EXEC dbo.csspValidaSenha ?, ?", username, password)
+            res = cur.fetchone()
+        except Exception as e:
+            print(f"Erro ao executar csspValidaSenha: {e}")
+            res = None
+
+        success = bool(res and (res[0] == 1 or res[0] is True))
+
+        if not success:
+            print("Usuário ou senha inválidos (csspValidaSenha)")
+            return None
+
+        # Se válido, buscar informações do usuário incluindo flags InativosN e PDVGerenteSN
+        try:
+            cur.execute(
+                "SELECT CodUsuario, NomeUsuario, InativosN, PDVGerenteSN FROM Usuarios WITH (NOLOCK) WHERE NomeUsuario = ?",
+                (username,),
+            )
+            row = cur.fetchone()
+            if not row:
+                print(f"Usuário válido mas registro ausente em Usuarios: {username}")
+                return {"CodUsuario": 0, "NomeUsuario": username}
+
+            cod = int(row[0]) if row[0] is not None else 0
+            nome_usuario = str(row[1]) if row[1] is not None else ""
+            inativos = int(row[2]) if row[2] is not None else 1
+            pdvgerente = int(row[3]) if row[3] is not None else 0
+
+            # Impor regras solicitadas
+            if inativos != 0 or pdvgerente != 1:
+                print(
+                    f"Usuário {username} não tem permissão: InativosN={inativos}, PDVGerenteSN={pdvgerente}"
+                )
+                return None
+
+            nome_usuario = nome_usuario.encode("utf-8", errors="ignore").decode("utf-8")
+            user_data = {
+                "CodUsuario": cod,
+                "NomeUsuario": nome_usuario,
+                "InativosN": inativos,
+                "PDVGerenteSN": pdvgerente,
+            }
+            print(f"Autenticação bem-sucedida para: {user_data}")
+            return user_data
+        except Exception as e:
+            print(f"Erro ao buscar dados do usuário após validação: {e}")
+            return None
+
+    except Exception as e:
+        print(f"Erro durante a autenticação: {str(e)}")
+        import traceback
+
+        traceback.print_exc()
+        return None
+    finally:
+        try:
+            if cur is not None:
+                cur.close()
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+version.py onde a versão no formato YY.MM.DD rev.X será definida para uso nos forms
+consulta_sql.py onde ficará toda a logica de SQL
+main. py onde ficará a logica principal do app
+valida_sql.py código ara validar a sql, só permitindo selects:"""Rotinas para sanitizar e validar consultas SQL de forma conservadora.
+
+Regras principais (implementadas):
+- Remove comentários (-- e /* */), literais entre aspas simples/duplas e identificadores entre colchetes.
+- Bloqueia DML/DDL e comandos administrativos listados pelo pedido do usuário.
+- Bloqueia transações, acesso a arquivos, e funções perigosas.
+- Bloqueia padrões indiretos como INSERT ... SELECT e SELECT ... INTO.
+- Permite SELECT e WITH, exige presença de FROM.
+- Permite UNION ALL, mas bloqueia UNION simples.
+
+Exporta:
+- validar_sql(query: str) -> True ou ValueError
+- is_select_only(query: str) -> bool
+"""
+from typing import Tuple
+import re
+
+
+_FORBIDDEN = {
+    # DML
+    'INSERT', 'UPDATE', 'DELETE', 'MERGE', 'REPLACE', 'UPSERT',
+    # DDL
+    'ALTER', 'DROP', 'TRUNCATE', 'CREATE', 'RENAME', 'COMMENT',
+    # Administrative / execution
+    'GRANT', 'REVOKE', 'DENY', 'EXEC', 'EXECUTE', 'CALL', 'SET', 'USE',
+    # Transactions
+    'BEGIN', 'COMMIT', 'ROLLBACK', 'SAVEPOINT',
+    # File / external access
+    'LOAD', 'INFILE', 'OUTFILE', 'XP_CMDSHELL', 'SP_CONFIGURE', 'OPENROWSET', 'OPENQUERY', 'BULK',
+    # Permissions / logs
+    'AUDIT', 'NOAUDIT', 'RECONFIGURE', 'SHUTDOWN',
+    # Remote / server properties
+    'LINKED', 'LINKED SERVER', 'SERVERPROPERTY', 'CLUSTER',
+}
+
+
+def _sanitize(query: str) -> str:
+    if not query:
+        return ''
+    s = str(query)
+    # remove block comments /* ... */
+    s = re.sub(r"/\*.*?\*/", ' ', s, flags=re.S)
+    # remove single-quoted literals (handles doubled single-quotes '') - do this early
+    s = re.sub(r"'(?:''|[^'])*'", ' ', s, flags=re.S)
+    # remove double-quoted literals/identifiers
+    s = re.sub(r'"(?:""|[^\"])*"', ' ', s, flags=re.S)
+    # remove bracketed identifiers [identifier] (SQL Server) handling doubled ]] escapes
+    s = re.sub(r"\[(?:\]\]|[^\]])*?\]", ' ', s, flags=re.S)
+    # remove line comments -- ... (to end of line) after literals removed to avoid matching inside strings
+    s = re.sub(r"--.*?(\n|$)", ' ', s)
+    # collapse whitespace
+    s = re.sub(r"\s+", ' ', s).strip()
+    return s
+
+
+def _upper_clean(query: str) -> str:
+    return _sanitize(query).upper()
+
+
+def validar_sql(query: str) -> Tuple[bool, str]:
+    """Valida a query. Retorna (True, '') se válida, ou (False, motivo) se inválida.
+
+    Lança ValueError se encontrar uma palavra proibida quando usada pela API validar_sql_strict.
+    """
+    if not query or not isinstance(query, str):
+        return False, 'SQL vazia ou inválida'
+
+    cleaned = _upper_clean(query)
+
+    # bloquear múltiplas statements: presença de ; após sanitização é sinal
+    if ';' in cleaned:
+        return False, 'Múltiplas statements detectadas (;)'
+
+    # Query deve começar com SELECT ou WITH
+    if not (cleaned.startswith('SELECT') or cleaned.startswith('WITH')):
+        return False, 'Apenas consultas SELECT/CTE são permitidas (deve iniciar com SELECT ou WITH)'
+
+    # exigir FROM
+    if ' FROM ' not in cleaned and '\nFROM ' not in cleaned:
+        return False, 'Consulta deve conter cláusula FROM'
+
+    # exigir WHERE (filtro obrigatório)
+    # evita queries 'SELECT * FROM tabela' sem filtros
+    if not re.search(r'\bWHERE\b', cleaned):
+        return False, 'Consulta deve conter cláusula WHERE (filtro obrigatório)'
+
+    # bloquear padrões indiretos
+    if re.search(r'\bSELECT\b[\s\S]*\bINTO\b', cleaned):
+        return False, 'SELECT ... INTO não permitido'
+    if re.search(r'\bINSERT\s+INTO\b[\s\S]*\bSELECT\b', cleaned):
+        return False, 'INSERT ... SELECT não permitido'
+
+    # bloquear UNION simples (permitir apenas UNION ALL)
+    # detecta UNION que não é seguido por ALL
+    for m in re.finditer(r'\bUNION\b', cleaned):
+        # check substring after match
+        pos = m.end()
+        tail = cleaned[pos:pos+10]
+        if not re.match(r'\s+ALL\b', tail):
+            return False, 'UNION simples não permitido (use UNION ALL se necessário)'
+
+    # verificar palavras proibidas usando correspondência por palavra inteira (word boundaries)
+    # Isso evita falsos-positivos onde 'SET' aparece dentro de palavras como 'SETOR'
+    for token in _FORBIDDEN:
+        try:
+            pattern = r"\b" + re.escape(token) + r"\b"
+            if re.search(pattern, cleaned):
+                return False, f'Comando proibido detectado: {token}'
+        except Exception:
+            # fallback para checagem simples
+            if token in cleaned:
+                return False, f'Comando proibido detectado: {token}'
+
+    # Permitimos um conjunto restrito de cláusulas/keywords; porém isso é só heurístico.
+    # Se chegou aqui, consideramos válido.
+    return True, ''
+
+
+def is_select_only(query: str) -> bool:
+    ok, reason = validar_sql(query)
+    return ok
+
+
+__all__ = ['validar_sql', 'is_select_only']
+# For saving fragments: a permissive validator that forbids obviously dangerous tokens
+def validar_sql_for_save(query: str) -> Tuple[bool, str]:
+    """Valida um SQL/fragmento para fins de salvamento. Mais permissivo que validar_sql:
+    - proíbe múltiplas statements (;)
+    - bloqueia palavras-chave perigosas (DML/DDL/exec/transaction)
+    - permite fragments que não começam com SELECT/WITH
+    Retorna (True, '') quando considera seguro para salvar.
+    """
+    if not query or not isinstance(query, str):
+        return False, 'SQL vazia ou inválida'
+    cleaned = _upper_clean(query)
+    if ';' in cleaned:
+        return False, 'Múltiplas statements detectadas (; )'
+    # check for forbidden tokens (subset)
+    dangerous = {
+        'INSERT', 'UPDATE', 'DELETE', 'MERGE', 'REPLACE',
+        'ALTER', 'DROP', 'TRUNCATE', 'CREATE',
+        'EXEC', 'EXECUTE', 'CALL',
+        'BEGIN', 'COMMIT', 'ROLLBACK',
+        'LOAD', 'INFILE', 'OUTFILE', 'XP_CMDSHELL'
+    }
+    for tok in dangerous:
+        try:
+            pattern = r"\b" + re.escape(tok) + r"\b"
+            if re.search(pattern, cleaned):
+                return False, f'Comando proibido detectado: {tok}'
+        except Exception:
+            if tok in cleaned:
+                return False, f'Comando proibido detectado: {tok}'
+    return True, ''
+
+__all__ = ['validar_sql', 'is_select_only', 'validar_sql_for_save']
+
+
+permitir exportar a sql gerada em formato de view para integrar com Microsoft power BI
+
+nome do app: CSData Studio
