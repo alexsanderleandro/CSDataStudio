@@ -294,21 +294,10 @@ class QueryBuilder:
 
             select_clause = "SELECT " + ", ".join(select_parts)
         
-        # Decide primeira tabela (FROM): prefira a tabela mais referenciada nas colunas
-        # Conta ocorrências de cada tabela nas colunas selecionadas
-        table_counts = { (schema, table): 0 for (schema, table) in tables }
-        for s, t, c in columns:
-            key = (s, t)
-            if key in table_counts:
-                table_counts[key] += 1
-
-        # Escolhe a tabela com maior ocorrência; se empate, mantém a ordem original
+        # Decide primeira tabela (FROM): usar a ordem fornecida em `tables`.
+        # A primeira tabela na lista é tratada como tabela principal (FROM);
+        # as demais serão adicionadas como JOINs na mesma ordem em que foram selecionadas.
         first_schema, first_table = tables[0]
-        max_count = -1
-        for (s, t), cnt in table_counts.items():
-            if cnt > max_count:
-                max_count = cnt
-                first_schema, first_table = s, t
 
         # FROM clause
         if alias_mode == 'none':
@@ -320,9 +309,8 @@ class QueryBuilder:
         # Monta JOINs
         join_clauses = []
         if len(tables) > 1:
-            # Reorder tables: start from the chosen first table, then append the others in the
-            # original order (skipping the first one)
-            ordered = [(first_schema, first_table)] + [t for t in tables if t != (first_schema, first_table)]
+            # Preserve the selection order: use tables as provided (first is FROM, rest are JOINs)
+            ordered = list(tables)
             for i in range(1, len(ordered)):
                 schema, table = ordered[i]
                 prev_schema, prev_table = ordered[i-1]
@@ -367,13 +355,15 @@ class QueryBuilder:
                     if alias_mode == 'none':
                         join_clauses.append(
                             f"{join_type.value} [{schema}].[{table}]" + NOLOCK + " "
-                            f"ON 1=1 -- AVISO: Relacionamento não encontrado, ajuste manualmente"
+                            f"ON 1=1 -- AVISO: Relacionamento não encontrado entre [{prev_schema}].[{prev_table}] e [{schema}].[{table}]; ajuste manualmente"
                         )
                     else:
+                        # sem relacionamento e usando aliases: calcula prev_alias antes de usar
                         curr_alias = aliases.get((schema, table))
+                        prev_alias = aliases.get((prev_schema, prev_table))
                         join_clauses.append(
                             f"{join_type.value} [{schema}].[{table}] AS {curr_alias}" + NOLOCK + " "
-                            f"ON 1=1 -- AVISO: Relacionamento não encontrado, ajuste manualmente"
+                            f"ON 1=1 -- AVISO: Relacionamento não encontrado entre {prev_alias or prev_table} e {curr_alias}; ajuste manualmente"
                         )
         
         # Ajusta WHERE para usar aliases quando possível

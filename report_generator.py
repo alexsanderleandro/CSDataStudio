@@ -10,6 +10,8 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.pdfgen import canvas
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from datetime import datetime
+from decimal import Decimal
+import csv
 from typing import List, Tuple, Optional
 import io
 import matplotlib.pyplot as plt
@@ -48,7 +50,9 @@ class ReportGenerator:
         chart_figure: Figure = None,
         include_table: bool = True,
         columns: List[str] = None,
-        data: List[Tuple] = None
+        data: List[Tuple] = None,
+        date_format: str = '%Y-%m-%d',
+        number_decimals: int = 2
     ) -> bool:
         """
         Cria um relatório PDF completo.
@@ -119,9 +123,40 @@ class ReportGenerator:
                 story.append(Paragraph("Resultado da Consulta", styles['Heading1']))
                 story.append(Spacer(1, 0.5*cm))
                 
-                # Prepara dados da tabela
-                table_data = [columns]  # Cabeçalho
-                table_data.extend(data[:100])  # Limita a 100 linhas no PDF
+                # Prepara e formata dados da tabela conforme preferências
+                table_rows = []
+                for row in data[:100]:
+                    row_fmt = []
+                    for v in row:
+                        if v is None:
+                            row_fmt.append('')
+                            continue
+                        if isinstance(v, Decimal):
+                            try:
+                                row_fmt.append(f"{float(v):.{number_decimals}f}")
+                            except Exception:
+                                row_fmt.append(str(v))
+                            continue
+                        if isinstance(v, (int, float)):
+                            if isinstance(v, float):
+                                try:
+                                    row_fmt.append(f"{v:.{number_decimals}f}")
+                                except Exception:
+                                    row_fmt.append(str(v))
+                            else:
+                                row_fmt.append(str(v))
+                            continue
+                        try:
+                            import datetime as _d
+                            if isinstance(v, (_d.date, _d.datetime)):
+                                row_fmt.append(v.strftime(date_format))
+                                continue
+                        except Exception:
+                            pass
+                        row_fmt.append(str(v))
+                    table_rows.append(row_fmt)
+
+                table_data = [columns] + table_rows
                 
                 # Cria tabela
                 table = Table(table_data, repeatRows=1)
@@ -189,6 +224,69 @@ class ReportGenerator:
         ))
         
         return styles
+
+    def create_csv(
+        self,
+        output_path: str,
+        columns: List[str],
+        data: List[Tuple],
+        date_format: str = '%Y-%m-%d',
+        number_decimals: int = 2,
+        encoding: str = 'utf-8-sig'
+    ) -> bool:
+        """Exporta dados para CSV aplicando as mesmas regras de formatação.
+
+        Args:
+            output_path: caminho do CSV de saída
+            columns: lista de nomes de colunas
+            data: lista de tuplas/linhas
+            date_format: formato de datas
+            number_decimals: casas decimais para floats/Decimal
+            encoding: codificação do arquivo (padrão utf-8-sig para compatibilidade Excel)
+        """
+        try:
+            with open(output_path, 'w', newline='', encoding=encoding) as fh:
+                writer = csv.writer(fh)
+                writer.writerow(columns)
+
+                for row in data:
+                    out_row = []
+                    for v in row:
+                        if v is None:
+                            out_row.append('')
+                            continue
+                        if isinstance(v, Decimal):
+                            try:
+                                out_row.append(f"{float(v):.{number_decimals}f}")
+                            except Exception:
+                                out_row.append(str(v))
+                            continue
+                        if isinstance(v, (int, float)):
+                            if isinstance(v, float):
+                                try:
+                                    out_row.append(f"{v:.{number_decimals}f}")
+                                except Exception:
+                                    out_row.append(str(v))
+                            else:
+                                out_row.append(str(v))
+                            continue
+                        try:
+                            import datetime as _d
+                            if isinstance(v, (_d.date, _d.datetime)):
+                                out_row.append(v.strftime(date_format))
+                                continue
+                        except Exception:
+                            pass
+                        out_row.append(str(v))
+
+                    writer.writerow(out_row)
+
+            return True
+        except Exception as e:
+            print(f"Erro ao exportar CSV: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     def _add_header_footer(
         self,

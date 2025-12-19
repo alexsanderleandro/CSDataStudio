@@ -7,8 +7,8 @@ from datetime import datetime
 class Version:
     MAJOR = 25  # Ano (YY)
     MINOR = 12   # Mês (MM)
-    PATCH = 16  # Dia (DD)
-    REVISION = 1  # Revisão
+    PATCH = 17  # Dia (DD)
+    REVISION = 2  # Revisão
     
     @classmethod
     def get_version(cls) -> str:

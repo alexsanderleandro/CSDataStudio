@@ -41,8 +41,8 @@ def validar_sql(sql: str) -> Tuple[bool, str]:
         return False, "Somente SELECT é permitido"
 
     # Requer cláusula WHERE em cada SELECT/CTE final (checagem simplificada)
-    # Procura por WHERE fora de parênteses básicos - heurística simples
-    if " where " not in low:
+    # Procura por WHERE usando borda de palavra para cobrir quebras de linha/formatacoes
+    if not re.search(r"\bwhere\b", low):
         return False, "Falta cláusula WHERE"
 
     return True, ""

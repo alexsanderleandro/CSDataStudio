@@ -61,7 +61,15 @@ class ChartGenerator:
         """
         try:
             # Converte dados para DataFrame
-            df = pd.DataFrame(data, columns=columns)
+            # Alguns drivers (pyodbc) retornam objetos Row que nem sempre são aceitos
+            # diretamente pelo pandas.DataFrame quando passados em uma lista. Para
+            # robustez, convertemos cada linha para uma tupla simples antes de
+            # criar o DataFrame e validamos o comprimento.
+            rows = [tuple(r) for r in data]
+            # valida consistência
+            if rows and any(len(r) != len(columns) for r in rows):
+                raise ValueError(f"Inconsistência entre número de colunas ({len(columns)}) e tamanho das linhas retornadas (ex.: {len(rows[0])}).")
+            df = pd.DataFrame(rows, columns=columns)
             
             # Valida colunas
             if x_column not in df.columns:
@@ -152,8 +160,11 @@ class ChartGenerator:
             Figura matplotlib
         """
         try:
-            # Converte dados para DataFrame
-            df = pd.DataFrame(data, columns=columns)
+            # Converte dados para DataFrame (robustez para Row objects)
+            rows = [tuple(r) for r in data]
+            if rows and any(len(r) != len(columns) for r in rows):
+                raise ValueError(f"Inconsistência entre número de colunas ({len(columns)}) e tamanho das linhas retornadas (ex.: {len(rows[0])}).")
+            df = pd.DataFrame(rows, columns=columns)
             
             # Valida colunas
             if x_column not in df.columns:

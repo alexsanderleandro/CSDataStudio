@@ -104,7 +104,8 @@ def get_db_connection(db_config: DatabaseConfig):
 def verify_user(
     username: str,
     password: str,
-    db_config: DatabaseConfig | None = None
+    db_config: DatabaseConfig | None = None,
+    return_reason: bool = False
 ) -> typing.Optional[dict]:
     """
     Valida o usuário lógico no banco.
@@ -117,6 +118,8 @@ def verify_user(
     """
 
     if not db_config or not username:
+        if return_reason:
+            return None, 'missing_parameters'
         return None
 
     conn = None
@@ -148,6 +151,8 @@ def verify_user(
 
             if not res or res[0] not in (1, True):
                 print("[INFO] Usuário ou senha inválidos (csspValidaSenha)")
+                if return_reason:
+                    return None, 'invalid_credentials'
                 return None
         else:
             # Procedure não encontrada: informa uma vez e tenta validar por coluna de senha
@@ -162,6 +167,8 @@ def verify_user(
             if 'nsenha' in cols:
                 # Não temos a procedure que valida nsenha de forma segura: não podemos validar — negar
                 print("[ERROR] Campo 'NSenha' presente, mas dbo.csspValidaSenha ausente: não é possível validar senha criptografada.")
+                if return_reason:
+                    return None, 'cannot_validate_encrypted_password'
                 return None
             # Se houver coluna de senha em texto, validamos abaixo (fluxo padrão segue)
 
@@ -174,7 +181,8 @@ def verify_user(
                 CodUsuario,
                 NomeUsuario,
                 InativosN,
-                PDVGerenteSN
+                PDVGerenteSN,
+                NivelUsuario
             FROM Usuarios WITH (NOLOCK)
             WHERE NomeUsuario = ?
             """,
@@ -184,18 +192,29 @@ def verify_user(
         row = cur.fetchone()
         if not row:
             print("[WARN] Usuário validado mas não encontrado na tabela Usuarios")
+            if return_reason:
+                return None, 'not_found'
             return None
 
         cod_usuario = int(row[0]) if row[0] is not None else 0
         nome_usuario = str(row[1]) if row[1] is not None else username
         inativos = int(row[2]) if row[2] is not None else 1
         gerente = int(row[3]) if row[3] is not None else 0
+        nivel = int(row[4]) if len(row) > 4 and row[4] is not None else 1
 
         # ----------------------------------------------------
         # Regras de acesso: somente se o usuário está ativo
         # ----------------------------------------------------
         if inativos != 0:
             print(f"[INFO] Acesso negado: InativosN={inativos}")
+            if return_reason:
+                return None, 'inactive'
+            return None
+        # Nova regra: somente usuários com NivelUsuario = 0 têm acesso ao app
+        if nivel != 0:
+            print(f"[INFO] Acesso negado: NivelUsuario={nivel}")
+            if return_reason:
+                return None, 'insufficient_level'
             return None
 
         user_data = {
@@ -203,14 +222,19 @@ def verify_user(
             "NomeUsuario": nome_usuario,
             "InativosN": inativos,
             "PDVGerenteSN": gerente,
+            "NivelUsuario": nivel,
             "LoginEm": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
         print(f"[DEBUG] Autenticação bem-sucedida: {user_data}")
+        if return_reason:
+            return user_data, None
         return user_data
 
     except Exception as e:
         print(f"[ERROR] Erro durante autenticação: {e}")
+        if return_reason:
+            return None, 'error'
         return None
 
     finally:

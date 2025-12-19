@@ -31,13 +31,9 @@ class QueryManager:
     
     def __init__(self, storage_path: str = None):
         if storage_path is None:
-            # Pasta padrão do aplicativo
-            app_data = os.path.join(
-                os.environ.get('APPDATA', os.path.expanduser('~')),
-                'CSDataStudio'
-            )
-            os.makedirs(app_data, exist_ok=True)
-            storage_path = os.path.join(app_data, 'saved_queries.json')
+            # Armazenar por padrão na pasta do aplicativo junto ao código
+            app_folder = os.path.dirname(__file__)
+            storage_path = os.path.join(app_folder, 'consultas.json')
         
         self.storage_path = storage_path
         self._queries: Dict[str, SavedQuery] = {}
@@ -107,7 +103,7 @@ class QueryManager:
         if name in self._queries and not overwrite:
             raise ValueError(f"Consulta '{name}' já existe. Use overwrite=True para sobrescrever.")
         
-        now = datetime.now().isoformat()
+        now = datetime.now().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
         
         if name in self._queries:
             # Atualiza consulta existente
@@ -178,8 +174,8 @@ class QueryManager:
         
         query = self._queries[old_name]
         query.name = new_name
-        query.modified_at = datetime.now().isoformat()
-        
+        query.modified_at = datetime.now().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+
         del self._queries[old_name]
         self._queries[new_name] = query
         

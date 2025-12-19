@@ -1,5 +1,5 @@
 """
-Testes unitários para CSData Studio
+Testes unitários para CSData Studio (migrado para tests/)
 Execute com: python -m pytest test_csdatastudio.py -v
 """
 import unittest
@@ -299,8 +299,6 @@ class TestChartGenerator(unittest.TestCase):
         )
         
         self.assertIsNotNone(fig)
-
-# Testes de execução/fluxo foram movidos para test_execute_flow.py
 
 # Runner
 def run_tests():

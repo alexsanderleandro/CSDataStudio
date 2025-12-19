@@ -22,3 +22,4 @@ openai>=1.0.0
 
 # Utilitários
 python-dateutil>=2.8.2
+pyminizip>=0.2

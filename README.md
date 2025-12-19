@@ -232,6 +232,26 @@ Verifique se a chave da API está válida
 pip install --upgrade matplotlib
 ```
 
+### Logs e proteção por senha
+
+O aplicativo grava um arquivo de log para cada sessão na pasta `Logs/` com o nome no formato:
+`log_<NomeUsuario>_YYYYMMDD_HHMMSS.zip`.
+
+- Se o pacote `pyminizip` estiver instalado, o log será empacotado em um ZIP protegido por senha (senha padrão: `PWDCEOSOFTWARE`).
+- No Windows, a instalação de `pyminizip` pode precisar do compilador C (Microsoft Visual C++ Build Tools). Se o pip falhar com uma mensagem informando "Microsoft Visual C++ 14.0 or greater is required", instale os Build Tools e tente novamente.
+
+Se `pyminizip` não estiver disponível, o aplicativo criará automaticamente um ZIP sem senha como fallback e escreverá uma nota no próprio arquivo de log informando que a proteção por senha não foi aplicada.
+
+Comandos úteis:
+
+```powershell
+# Tentar instalar o pyminizip (pode exigir Build Tools no Windows)
+pip install pyminizip
+
+# Se pip reclamar sobre o compilador no Windows, instale os Build Tools:
+# https://visualstudio.microsoft.com/visual-cpp-build-tools/
+```
+
 ## 📄 Licença
 
 © 2025 CEO Software. Todos os direitos reservados.
