@@ -1,0 +1,109 @@
+{
+  "modulo": "vendas",
+  "nome": "Vendas",
+  "descricao": "Metadados gerados a partir da view CnsVendasRefPeriodo",
+
+  "tabelas": {
+    "VendasRefPeriodo": {
+      "nome": "Vendas referentes ao período",
+      "tipo": "principal",
+      "chave_primaria": ["NumRegistro"],
+
+      "relacionamentos": [
+        {
+          "tabela": "Clientes",
+          "tipo": "left",
+          "on": "VendasRefPeriodo.CodCliente = Clientes.CodCliente"
+        },
+        {
+          "tabela": "Vendedores",
+          "tipo": "left",
+          "on": "VendasRefPeriodo.CodVendedor = Vendedores.CodVendedor"
+        },
+        {
+          "tabela": "Produtos",
+          "tipo": "left",
+          "on": "VendasRefPeriodo.CodProduto = Produtos.CodProduto"
+        },
+        {
+          "tabela": "Empresas",
+          "tipo": "left",
+          "on": "VendasRefPeriodo.CodEmpresa = Empresas.CodEmpresa"
+        },
+        {
+          "tabela": "Regioes",
+          "tipo": "left",
+          "on": "VendasRefPeriodo.CodRegiao = Regioes.CodRegiao"
+        },
+        {
+          "tabela": "GrupoEstoque",
+          "tipo": "left",
+          "on": "VendasRefPeriodo.CodGrupo = GrupoEstoque.CodGrupo"
+        }
+      ],
+
+      "campos": {
+        "padrao": [
+          { "campo": "Numero", "label": "Número", "tipo": "string" },
+          { "campo": "DataMovimento", "label": "Data Movimento", "tipo": "date" },
+          { "campo": "CodCliente", "label": "Código Cliente", "tipo": "string" },
+          { "campo": "NomeEmpresa", "label": "Empresa", "tipo": "string" },
+          { "campo": "CodVendedor", "label": "Código Vendedor", "tipo": "string" },
+          { "campo": "NomeVendedor", "label": "Vendedor", "tipo": "string" },
+          { "campo": "DescricaoProduto", "label": "Produto", "tipo": "string" },
+          { "campo": "CodProduto", "label": "Código Produto", "tipo": "string" },
+          { "campo": "PrecoUnitario", "label": "Preço Unitário", "tipo": "decimal" },
+          { "campo": "Quantidade", "label": "Quantidade", "tipo": "decimal" },
+          { "campo": "TotalProduto", "label": "Total Produto", "tipo": "decimal" },
+          { "campo": "TotalDesconto", "label": "Total Desconto", "tipo": "decimal" },
+          { "campo": "CodGrupo", "label": "Código Grupo", "tipo": "string" },
+          { "campo": "NomeGrupo", "label": "Nome Grupo", "tipo": "string" },
+          { "campo": "Cidade", "label": "Cidade", "tipo": "string" },
+          { "campo": "Estado", "label": "Estado", "tipo": "string" }
+        ],
+
+        "avancado": [
+          { "campo": "TipoRegistro", "label": "Tipo Registro", "tipo": "string" },
+          { "campo": "TipoOrigem", "label": "Tipo Origem", "tipo": "string" },
+          { "campo": "SerieOrigem", "label": "Série Origem", "tipo": "string" },
+          { "campo": "CodEmpresa", "label": "Código Empresa", "tipo": "int" },
+          { "campo": "NumRegistro", "label": "Num Registro", "tipo": "int" },
+          { "campo": "CodFiscal", "label": "Código Fiscal", "tipo": "string" },
+          { "campo": "PesoLiquido", "label": "Peso Líquido", "tipo": "decimal" },
+          { "campo": "PesoBruto", "label": "Peso Bruto", "tipo": "decimal" },
+          { "campo": "TotalProdutoSemST", "label": "Total Produto Sem ST", "tipo": "decimal" },
+          { "campo": "ValorFCP_Substituicao", "label": "Valor FCP Substituição", "tipo": "decimal" },
+          { "campo": "CodRegiao", "label": "Código Região", "tipo": "string" },
+          { "campo": "RazaoSocial", "label": "Razão Social", "tipo": "string" },
+          { "campo": "CodGrupoEmpresa", "label": "Código Grupo Empresa", "tipo": "int" },
+          { "campo": "CodTipoProduto", "label": "Código Tipo Produto", "tipo": "int" },
+          { "campo": "NomeTipoProduto", "label": "Nome Tipo Produto", "tipo": "string" },
+          { "campo": "Localizacao", "label": "Localização", "tipo": "string" },
+          { "campo": "CodCondicao", "label": "Código Condição", "tipo": "int" },
+          { "campo": "NumPedido", "label": "Número Pedido", "tipo": "string" },
+          { "campo": "TransmitidaSN", "label": "Transmitida (S/N)", "tipo": "boolean" },
+          { "campo": "CodMotivoDevolucao", "label": "Código Motivo Devolução", "tipo": "int" },
+          { "campo": "NomeMotivoDevolucao", "label": "Motivo Devolução", "tipo": "string" },
+          { "campo": "TipoDocumento", "label": "Tipo Documento", "tipo": "string" },
+          { "campo": "CodTipoVendedor", "label": "Código Tipo Vendedor", "tipo": "int" },
+          { "campo": "CodVendedorResp", "label": "Vendedor Responsável", "tipo": "string" },
+          { "campo": "QuantidadeBase", "label": "Quantidade Base", "tipo": "decimal" },
+          { "campo": "CustoAtual", "label": "Custo Atual", "tipo": "decimal" },
+          { "campo": "CustoMedio", "label": "Custo Médio", "tipo": "decimal" },
+          { "campo": "CustoMedioContabil", "label": "Custo Médio Contábil", "tipo": "decimal" },
+          { "campo": "CustoContabil", "label": "Custo Contábil", "tipo": "decimal" },
+          { "campo": "CustoReposicao", "label": "Custo Reposição", "tipo": "decimal" },
+          { "campo": "CustoDashboard", "label": "Custo Dashboard", "tipo": "decimal" },
+          { "campo": "PercMarkupNF", "label": "Perc Markup NF", "tipo": "decimal" },
+          { "campo": "PercMarkup", "label": "Perc Markup", "tipo": "decimal" },
+          { "campo": "TipoDevolucao", "label": "Tipo Devolução", "tipo": "string" },
+          { "campo": "Unidade", "label": "Unidade", "tipo": "string" },
+          { "campo": "NumDecimais", "label": "Número Decimais", "tipo": "int" },
+          { "campo": "PesoVariavel", "label": "Peso Variável", "tipo": "boolean" },
+          { "campo": "PercentualReducao", "label": "Percentual Redução", "tipo": "float" },
+          { "campo": "OrdemItem", "label": "Ordem Item", "tipo": "int" }
+        ]
+      }
+    }
+  }
+}

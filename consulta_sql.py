@@ -1,409 +1,419 @@
 """
 Gerenciador de consultas SQL para CSData Studio
-Responsável por construir queries, detectar relacionamentos e executar consultas
+Construção dinâmica de SQL a partir de metadados JSON
 """
-import pyodbc
-from typing import List, Dict, Tuple, Optional, Set
-from dataclasses import dataclass
-from enum import Enum
 
-class JoinType(Enum):
-    """Tipos de JOIN suportados"""
-    INNER = "INNER JOIN"
-    LEFT = "LEFT JOIN"
-    RIGHT = "RIGHT JOIN"
+import json
+import pyodbc
+import re
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional
+from enum import Enum
+from dataclasses import dataclass
+
 
 @dataclass
 class TableInfo:
-    """Informações sobre uma tabela"""
     schema: str
     name: str
-    type: str  # 'TABLE' ou 'VIEW'
-    
+    type: str
+
     @property
     def full_name(self) -> str:
-        return f"[{self.schema}].[{self.name}]"
+        return f"[{self.schema}].{self.name}"
+
 
 @dataclass
 class ColumnInfo:
-    """Informações sobre uma coluna"""
     table_schema: str
     table_name: str
     column_name: str
     data_type: str
     is_nullable: bool
-    
+
     @property
     def full_name(self) -> str:
-        return f"[{self.table_schema}].[{self.table_name}].[{self.column_name}]"
+        return f"{self.table_name}.{self.column_name}"
+
 
 @dataclass
 class ForeignKey:
-    """Informações sobre chave estrangeira"""
+    constraint_name: str
+    fk_schema: str
     fk_table: str
     fk_column: str
+    pk_schema: str
     pk_table: str
     pk_column: str
-    constraint_name: str
+
+
+class JoinType(Enum):
+    INNER = "INNER JOIN"
+    LEFT = "LEFT JOIN"
+    RIGHT = "RIGHT JOIN"
+
 
 class QueryBuilder:
-    """Construtor de queries SQL"""
-    
-    def __init__(self, connection: pyodbc.Connection):
-        self.conn = connection
-        self._relationships: Dict[str, List[ForeignKey]] = {}
-    
+    def __init__(self, conn: pyodbc.Connection, pasta_metadados: str = "metadados"):
+        self.conn = conn
+        self.pasta_metadados = Path(pasta_metadados)
+
+    # ==========================================================
+    # Leitura de Metadados
+    # ==========================================================
+    def _carregar_json(self, nome: str) -> Dict:
+        caminho = self.pasta_metadados / nome
+        if not caminho.exists():
+            raise FileNotFoundError(f"Arquivo de metadados não encontrado: {nome}")
+        with open(caminho, encoding="utf-8") as f:
+            return json.load(f)
+
+    def carregar_modulo(self, modulo: str) -> Dict:
+        return self._carregar_json(f"{modulo}.json")
+
+    def carregar_agrupamentos(self, modulo: str) -> Dict:
+        return self._carregar_json(f"{modulo}_agrupamentos.json")
+
+    # ==========================================================
+    # Geração de SQL
+    # ==========================================================
+    def gerar_sql_por_agrupamento(
+        self,
+        modulo: str,
+        agrupamento_id: str,
+        filtros: Optional[List] = None,
+        aliases: Optional[Dict[tuple, str]] = None
+    ) -> tuple:
+
+        modulo_meta = self.carregar_modulo(modulo)
+        agrup_meta = self.carregar_agrupamentos(modulo)
+
+        agrupamento = next(
+            (a for a in agrup_meta["agrupamentos"] if a["id"] == agrupamento_id),
+            None
+        )
+        if not agrupamento:
+            raise ValueError(f"Agrupamento '{agrupamento_id}' não encontrado.")
+
+        tabela_principal = agrupamento["tabela"]
+        select_parts = []
+        group_by_parts = []
+        join_parts = []
+        where_params = []
+
+        # helper: normalize table identifier and optionally add alias
+        def parse_table_ident(t: str):
+            # aceita formas: [schema].Table, schema.table, table
+            parts = re.split(r"\.|\[|\]", t)
+            parts = [p for p in parts if p]
+            if len(parts) == 1:
+                return ('dbo', parts[0])
+            elif len(parts) == 2:
+                return (parts[0], parts[1])
+            else:
+                return (parts[-2], parts[-1])
+
+        def apply_alias_to_table(t: str):
+            schema, tbl = parse_table_ident(t)
+            # always return a normalized qualified name; add alias if present
+            qualified = f"[{schema}].[{tbl}]"
+            if aliases and (schema, tbl) in aliases:
+                return f"{qualified} {aliases[(schema, tbl)]}"
+            return qualified
+
+        # helper: qualify a field name using available aliases
+        def qualify_field(field: str):
+            """Se o campo for simples (ex: 'CodVendedor'), prefixa com o alias da tabela principal
+            quando disponível. Se já estiver qualificado (schema.table.col ou table.col), tenta
+            substituir o table pelo alias correspondente quando houver um mapeamento em aliases.
+            """
+            if not field:
+                return field
+            s = str(field).strip()
+            # se já tem ponto (qualificado), tentaremos substituir por alias quando possível
+            if '.' in s:
+                # captura a porção final (coluna) e a porção da esquerda (possível esquema/tabela)
+                # exemplos de formatos: [dbo].[Tabela].Col, dbo.Tabela.Col, Tabela.Col
+                m = re.match(r"^\[?(?P<left>[^\]]+?)\]?\.?\[?(?P<table>[^\]]+?)\]?\.(?P<col>\w+)$", s)
+                if m:
+                    left = m.group('left')
+                    table = m.group('table')
+                    col = m.group('col')
+                    # tente achar alias primeiro por (schema,table)
+                    try_keys = []
+                    # left pode ser schema or schema.table depending on match; prefer (left,table)
+                    try_keys.append((left, table))
+                    try_keys.append((None, table))
+                    for k in try_keys:
+                        if aliases and k in aliases:
+                            return f"{aliases[k]}.{col}"
+                # se não conseguimos mapear, return original string limpa
+                return s
+            else:
+                # campo sem qualificação: prefixar com alias da tabela principal quando houver
+                try:
+                    p_schema, p_table = parse_table_ident(tabela_principal)
+                    if aliases and (p_schema, p_table) in aliases:
+                        return f"{aliases[(p_schema, p_table)]}.{s}"
+                except Exception:
+                    pass
+                return s
+
+        # Dimensões
+        for dim in agrupamento.get("dimensoes", []):
+            if isinstance(dim, dict) and dim.get("tipo") == "mes_ano":
+                campo = dim["campo"]
+                qcampo = qualify_field(campo)
+                expr = f"FORMAT({qcampo}, 'yyyy-MM')"
+                select_parts.append(f"{expr} AS MesAno")
+                group_by_parts.append(expr)
+            else:
+                # dim pode ser string simples ou já qualificado
+                q = qualify_field(dim) if isinstance(dim, str) else dim
+                select_parts.append(q)
+                group_by_parts.append(q)
+
+        # Métricas
+        for met in agrupamento.get("metricas", []):
+            campo = met["campo"]
+            func = met["funcao"]
+            label = met["label"]
+            qcampo = qualify_field(campo)
+            select_parts.append(f"{func}({qcampo}) AS [{label}]")
+
+        # JOINs
+        for join in agrupamento.get("joins", []):
+            join_parts.append(
+                f"INNER JOIN {join['tabela']} ON {join['on']}"
+            )
+
+        # SQL base
+        sql = f"""
+        SELECT
+            {", ".join(select_parts)}
+        FROM {apply_alias_to_table(tabela_principal)}
+        """
+
+        if join_parts:
+            # if aliases provided, attempt to rewrite join table names and ON expressions
+            rewritten_joins = []
+            # helper: reescreve a expressão ON substituindo referências table.col ou schema.table.col por alias.col
+            def rewrite_on_expr(on_expr: str) -> str:
+                if not aliases:
+                    return on_expr
+                # encontra tokens do tipo [schema].[table].col ou schema.table.col ou table.col ou [table].col
+                token_re = re.compile(r"(?P<tok>(?:\[[^\]]+\]|[A-Za-z0-9_]+)(?:\.(?:\[[^\]]+\]|[A-Za-z0-9_]+)){1,2})")
+                out = []
+                last = 0
+                for m in token_re.finditer(on_expr):
+                    start, end = m.span('tok')
+                    out.append(on_expr[last:start])
+                    tok = m.group('tok')
+                    # split parts and strip brackets
+                    parts = [p.strip('[]') for p in tok.split('.')]
+                    alias_repl = None
+                    if len(parts) == 3:
+                        schema, table, col = parts
+                        # try exact (schema,table)
+                        if (schema, table) in aliases:
+                            alias_repl = f"{aliases[(schema, table)]}.{col}"
+                        else:
+                            # try match by table name only
+                            for (s2, t2), a2 in aliases.items():
+                                if t2.lower() == table.lower():
+                                    alias_repl = f"{a2}.{col}"
+                                    break
+                    elif len(parts) == 2:
+                        table, col = parts
+                        # try match by table name
+                        for (s2, t2), a2 in aliases.items():
+                            if t2.lower() == table.lower():
+                                alias_repl = f"{a2}.{col}"
+                                break
+                    # if found replacement, use it, else keep original token (but normalized without extra brackets)
+                    if alias_repl:
+                        out.append(alias_repl)
+                    else:
+                        out.append(tok)
+                    last = end
+                out.append(on_expr[last:])
+                return ''.join(out)
+
+            for j in join_parts:
+                # expected original format: 'INNER JOIN {join_table} ON {on_expr}'
+                m = re.match(r"(\w+\s+JOIN)\s+(.+)\s+ON\s+(.+)", j, re.IGNORECASE)
+                if m:
+                    join_kw = m.group(1)
+                    join_table = m.group(2).strip()
+                    on_expr = m.group(3).strip()
+                    jt_schema, jt_table = parse_table_ident(join_table)
+                    if aliases and (jt_schema, jt_table) in aliases:
+                        alias = aliases[(jt_schema, jt_table)]
+                        join_table_repr = f"[{jt_schema}].[{jt_table}] {alias}"
+                        on_expr = rewrite_on_expr(on_expr)
+                        rewritten_joins.append(f"{join_kw} {join_table_repr} ON {on_expr}")
+                    else:
+                        rewritten_joins.append(j)
+                else:
+                    rewritten_joins.append(j)
+            sql += "\n" + "\n".join(rewritten_joins)
+
+        if filtros:
+            # filtros pode ser lista de strings (compatibilidade) ou lista de tuples (expr, params)
+            exprs = []
+            for f in filtros:
+                if isinstance(f, (list, tuple)) and len(f) >= 1:
+                    exprs.append(f[0])
+                    if len(f) > 1 and f[1]:
+                        if isinstance(f[1], (list, tuple)):
+                            where_params.extend(list(f[1]))
+                        else:
+                            where_params.append(f[1])
+                else:
+                    exprs.append(str(f))
+            sql += "\nWHERE " + " AND ".join(exprs)
+
+        if group_by_parts:
+            sql += "\nGROUP BY " + ", ".join(group_by_parts)
+
+        return sql.strip(), where_params
+
+    # ==========================================================
+    # Execução
+    # ==========================================================
+    def executar_sql(self, sql: str, params: Optional[List] = None) -> Tuple[List[str], List[tuple]]:
+        cursor = self.conn.cursor()
+        if params:
+            cursor.execute(sql, params)
+        else:
+            cursor.execute(sql)
+
+        colunas = [c[0] for c in cursor.description] if cursor.description else []
+        dados = cursor.fetchall()
+
+        cursor.close()
+        return colunas, dados
+
+    def execute_query(self, sql: str, params: Optional[List] = None) -> Tuple[List[str], List[tuple]]:
+        """Wrapper compatível com chamadas existentes (inglês) que aceita parâmetros."""
+        return self.executar_sql(sql, params)
+
+    # ==========================================================
+    # Métodos de utilitários/metadata (compatibilidade com Main)
+    # ==========================================================
     def get_tables_and_views(self) -> List[TableInfo]:
-        """Retorna todas as tabelas e views do banco"""
-        query = """
-        SELECT 
-            TABLE_SCHEMA,
-            TABLE_NAME,
-            TABLE_TYPE
+        """Retorna uma lista de TableInfo com tabelas e views do banco."""
+        sql = """
+        SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE
         FROM INFORMATION_SCHEMA.TABLES
         WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')
         ORDER BY TABLE_SCHEMA, TABLE_NAME
         """
-        cursor = self.conn.cursor()
-        cursor.execute(query)
-        
-        tables = []
-        for row in cursor.fetchall():
-            tables.append(TableInfo(
-                schema=row.TABLE_SCHEMA,
-                name=row.TABLE_NAME,
-                type='TABLE' if row.TABLE_TYPE == 'BASE TABLE' else 'VIEW'
-            ))
-        
-        cursor.close()
-        return tables
-    
+        cur = self.conn.cursor()
+        cur.execute(sql)
+        rows = cur.fetchall()
+        cur.close()
+        result = []
+        for r in rows:
+            schema, name, ttype = r[0], r[1], r[2]
+            # normalize type to 'TABLE' or 'VIEW'
+            t = 'VIEW' if 'VIEW' in (ttype or '').upper() else 'TABLE'
+            result.append(TableInfo(schema=schema, name=name, type=t))
+        return result
+
     def get_table_columns(self, schema: str, table: str) -> List[ColumnInfo]:
-        """Retorna todas as colunas de uma tabela"""
-        query = """
-        SELECT 
-            TABLE_SCHEMA,
-            TABLE_NAME,
-            COLUMN_NAME,
-            DATA_TYPE,
-            IS_NULLABLE
+        """Retorna ColumnInfo para a tabela informada."""
+        sql = """
+        SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE
         FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
         ORDER BY ORDINAL_POSITION
         """
-        cursor = self.conn.cursor()
-        cursor.execute(query, (schema, table))
-        
-        columns = []
-        for row in cursor.fetchall():
-            columns.append(ColumnInfo(
-                table_schema=row.TABLE_SCHEMA,
-                table_name=row.TABLE_NAME,
-                column_name=row.COLUMN_NAME,
-                data_type=row.DATA_TYPE,
-                is_nullable=(row.IS_NULLABLE == 'YES')
-            ))
-        
-        cursor.close()
-        return columns
-    
-    def get_foreign_keys(self, schema: str, table: str) -> List[ForeignKey]:
-        """Retorna as chaves estrangeiras de uma tabela"""
-        query = """
-        SELECT 
-            fk.name AS FK_NAME,
-            tp.name AS FK_TABLE,
-            cp.name AS FK_COLUMN,
-            tr.name AS PK_TABLE,
-            cr.name AS PK_COLUMN
-        FROM sys.foreign_keys fk
-        INNER JOIN sys.tables tp ON fk.parent_object_id = tp.object_id
-        INNER JOIN sys.tables tr ON fk.referenced_object_id = tr.object_id
-        INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-        INNER JOIN sys.columns cp ON fkc.parent_column_id = cp.column_id 
-            AND fkc.parent_object_id = cp.object_id
-        INNER JOIN sys.columns cr ON fkc.referenced_column_id = cr.column_id 
-            AND fkc.referenced_object_id = cr.object_id
-        WHERE SCHEMA_NAME(tp.schema_id) = ? AND tp.name = ?
-        """
-        cursor = self.conn.cursor()
-        cursor.execute(query, (schema, table))
-        
-        fks = []
-        for row in cursor.fetchall():
-            fks.append(ForeignKey(
-                fk_table=row.FK_TABLE,
-                fk_column=row.FK_COLUMN,
-                pk_table=row.PK_TABLE,
-                pk_column=row.PK_COLUMN,
-                constraint_name=row.FK_NAME
-            ))
-        
-        cursor.close()
-        return fks
-
-    def get_primary_keys(self, schema: str, table: str) -> List[str]:
-        """Retorna lista de colunas que fazem parte da PK da tabela (ordem definida)."""
-        query = """
-        SELECT k.COLUMN_NAME
-        FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-        INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE k
-            ON tc.CONSTRAINT_NAME = k.CONSTRAINT_NAME
-            AND tc.TABLE_SCHEMA = k.TABLE_SCHEMA
-        WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ? AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
-        ORDER BY k.ORDINAL_POSITION
-        """
-        cursor = self.conn.cursor()
-        cursor.execute(query, (schema, table))
-        cols = [r.COLUMN_NAME for r in cursor.fetchall()]
-        cursor.close()
+        cur = self.conn.cursor()
+        cur.execute(sql, (schema, table))
+        rows = cur.fetchall()
+        cur.close()
+        cols = []
+        for r in rows:
+            is_nullable = True if (r[4] or '').upper() == 'YES' else False
+            cols.append(ColumnInfo(table_schema=r[0], table_name=r[1], column_name=r[2], data_type=r[3], is_nullable=is_nullable))
         return cols
 
-    def get_table_dependencies(self, schema: str, table: str) -> dict:
-        """Retorna dependências da tabela:
-        {
-            'references': [(fk_schema, fk_table, fk_column, pk_schema, pk_table, pk_column), ...],
-            'referenced_by': [(fk_schema, fk_table, fk_column, pk_schema, pk_table, pk_column), ...]
-        }
-        Onde 'references' são as tabelas que a tabela atual referencia (FKs desta tabela -> outras),
-        e 'referenced_by' são tabelas que referenciam a tabela atual.
+    def get_foreign_keys(self, schema: str, table: str) -> List[ForeignKey]:
+        """Retorna lista de ForeignKey envolvendo a tabela (como fk ou pk).
+
+        Usa INFORMATION_SCHEMA para ser mais portátil.
         """
-        query = """
-        SELECT 
-            SCHEMA_NAME(tp.schema_id) AS FK_SCHEMA,
-            tp.name AS FK_TABLE,
-            cp.name AS FK_COLUMN,
-            SCHEMA_NAME(tr.schema_id) AS PK_SCHEMA,
-            tr.name AS PK_TABLE,
-            cr.name AS PK_COLUMN
-        FROM sys.foreign_keys fk
-        INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-        INNER JOIN sys.tables tp ON fk.parent_object_id = tp.object_id
-        INNER JOIN sys.columns cp ON fkc.parent_column_id = cp.column_id AND fkc.parent_object_id = cp.object_id
-        INNER JOIN sys.tables tr ON fk.referenced_object_id = tr.object_id
-        INNER JOIN sys.columns cr ON fkc.referenced_column_id = cr.column_id AND fkc.referenced_object_id = cr.object_id
-        WHERE SCHEMA_NAME(tp.schema_id) = ? AND tp.name = ?
+        sql = """
+        SELECT
+            kcu.CONSTRAINT_NAME,
+            kcu.TABLE_SCHEMA AS FK_SCHEMA,
+            kcu.TABLE_NAME AS FK_TABLE,
+            kcu.COLUMN_NAME AS FK_COLUMN,
+            ccu.TABLE_SCHEMA AS PK_SCHEMA,
+            ccu.TABLE_NAME AS PK_TABLE,
+            ccu.COLUMN_NAME AS PK_COLUMN
+        FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+        JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu ON rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+        JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu ON rc.UNIQUE_CONSTRAINT_NAME = ccu.CONSTRAINT_NAME
+        WHERE kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ?
         """
-        cursor = self.conn.cursor()
-        cursor.execute(query, (schema, table))
-        refs = [(r.FK_SCHEMA, r.FK_TABLE, r.FK_COLUMN, r.PK_SCHEMA, r.PK_TABLE, r.PK_COLUMN) for r in cursor.fetchall()]
+        cur = self.conn.cursor()
+        cur.execute(sql, (schema, table))
+        rows = cur.fetchall()
+        fks = []
+        for r in rows:
+            # (constraint, fk_schema, fk_table, fk_col, pk_schema, pk_table, pk_col)
+            fks.append(ForeignKey(constraint_name=r[0], fk_schema=r[1], fk_table=r[2], fk_column=r[3], pk_schema=r[4], pk_table=r[5], pk_column=r[6]))
+        cur.close()
+        return fks
 
-        # referenced_by: other tables where referenced_table == this table
-        query2 = """
-        SELECT 
-            SCHEMA_NAME(tp.schema_id) AS FK_SCHEMA,
-            tp.name AS FK_TABLE,
-            cp.name AS FK_COLUMN,
-            SCHEMA_NAME(tr.schema_id) AS PK_SCHEMA,
-            tr.name AS PK_TABLE,
-            cr.name AS PK_COLUMN
-        FROM sys.foreign_keys fk
-        INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-        INNER JOIN sys.tables tp ON fk.parent_object_id = tp.object_id
-        INNER JOIN sys.columns cp ON fkc.parent_column_id = cp.column_id AND fkc.parent_object_id = cp.object_id
-        INNER JOIN sys.tables tr ON fk.referenced_object_id = tr.object_id
-        INNER JOIN sys.columns cr ON fkc.referenced_column_id = cr.column_id AND fkc.referenced_object_id = cr.object_id
-        WHERE SCHEMA_NAME(tr.schema_id) = ? AND tr.name = ?
+    def get_table_dependencies(self, schema: str, table: str) -> Dict[str, List[Tuple]]:
+        """Retorna um dicionário com chaves 'references' (esta tabela -> outra)
+        e 'referenced_by' (outras -> esta), cada qual é uma lista de tuplas
+        com informações compatíveis com o consumo em `main.py`.
         """
-        cursor.execute(query2, (schema, table))
-        refs_by = [(r.FK_SCHEMA, r.FK_TABLE, r.FK_COLUMN, r.PK_SCHEMA, r.PK_TABLE, r.PK_COLUMN) for r in cursor.fetchall()]
-        cursor.close()
+        # referências onde esta tabela possui FK para outra (esta -> outra)
+        refs = []
+        for fk in self.get_foreign_keys(schema, table):
+            refs.append((fk.constraint_name, fk.fk_schema, fk.fk_table, fk.fk_column, fk.pk_schema, fk.pk_table, fk.pk_column))
 
-        return {'references': refs, 'referenced_by': refs_by}
-    
-    def find_relationship(self, table1: str, table2: str) -> Optional[ForeignKey]:
+        # referências onde outras tabelas possuem FK apontando para esta (outras -> esta)
+        sql = """
+        SELECT
+            kcu.CONSTRAINT_NAME,
+            kcu.TABLE_SCHEMA AS FK_SCHEMA,
+            kcu.TABLE_NAME AS FK_TABLE,
+            kcu.COLUMN_NAME AS FK_COLUMN,
+            ccu.TABLE_SCHEMA AS PK_SCHEMA,
+            ccu.TABLE_NAME AS PK_TABLE,
+            ccu.COLUMN_NAME AS PK_COLUMN
+        FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+        JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu ON rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+        JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu ON rc.UNIQUE_CONSTRAINT_NAME = ccu.CONSTRAINT_NAME
+        WHERE ccu.TABLE_SCHEMA = ? AND ccu.TABLE_NAME = ?
         """
-        Encontra relacionamento entre duas tabelas.
-        Procura em ambas as direções.
+        cur = self.conn.cursor()
+        cur.execute(sql, (schema, table))
+        rows = cur.fetchall()
+        referenced_by = []
+        for r in rows:
+            referenced_by.append((r[0], r[1], r[2], r[3], r[4], r[5], r[6]))
+        cur.close()
+
+        return {'references': refs, 'referenced_by': referenced_by}
+
+    def get_primary_keys(self, schema: str, table: str) -> List[str]:
+        """Retorna lista de nomes de colunas que compõem a PK da tabela."""
+        sql = """
+        SELECT kcu.COLUMN_NAME
+        FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+        JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+        WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' AND kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ?
+        ORDER BY kcu.ORDINAL_POSITION
         """
-        # Carrega relacionamentos se necessário
-        if table1 not in self._relationships:
-            fks = self.get_foreign_keys('dbo', table1)
-            self._relationships[table1] = fks
-        
-        if table2 not in self._relationships:
-            fks = self.get_foreign_keys('dbo', table2)
-            self._relationships[table2] = fks
-        
-        # Procura table1 -> table2
-        for fk in self._relationships.get(table1, []):
-            if fk.pk_table == table2:
-                return fk
-        
-        # Procura table2 -> table1
-        for fk in self._relationships.get(table2, []):
-            if fk.pk_table == table1:
-                return fk
-        
-        return None
-    
-    def build_query(
-        self,
-        tables: List[Tuple[str, str]],  # [(schema, table), ...]
-        columns: List[Tuple[str, str, str]],  # [(schema, table, column), ...]
-        joins: Dict[Tuple[str, str], JoinType] = None,  # {(table1, table2): JoinType}
-        where_clause: str = None,
-        alias_mode: str = 'short'  # 'none' | 'short' | 'descriptive'
-    ) -> str:
-        """
-        Constrói uma query SQL baseada nas tabelas e colunas selecionadas.
-        Detecta automaticamente os JOINs se não forem especificados.
-        """
-        if not tables or not columns:
-            raise ValueError("É necessário selecionar ao menos uma tabela e uma coluna")
-        
-        # Monta SELECT — comportamento depende do alias_mode
-        NOLOCK = " WITH (NOLOCK)"
-
-        if alias_mode == 'none':
-            # Sem aliases: usa nomes totalmente qualificados
-            select_parts = [f"[{s}].[{t}].[{c}]" for (s, t, c) in columns]
-            select_clause = "SELECT " + ", ".join(select_parts)
-        else:
-            # Cria aliases — curto (3 chars) ou descritivo (nome completo limpo)
-            aliases: Dict[Tuple[str, str], str] = {}
-            used_aliases: Dict[str, int] = {}
-            def make_alias_short(table_name: str) -> str:
-                base = ''.join([c for c in table_name if c.isalnum()])[:3].lower() or 't'
-                if base not in used_aliases:
-                    used_aliases[base] = 1
-                    return base
-                else:
-                    used_aliases[base] += 1
-                    return f"{base}{used_aliases[base]}"
-
-            def make_alias_desc(table_name: str) -> str:
-                # usa o nome da tabela inteiro (limpando caracteres não alfanuméricos)
-                base = ''.join([c for c in table_name if c.isalnum()]).lower()[:30] or 't'
-                if base not in used_aliases:
-                    used_aliases[base] = 1
-                    return base
-                else:
-                    used_aliases[base] += 1
-                    return f"{base}{used_aliases[base]}"
-
-            maker = make_alias_short if alias_mode == 'short' else make_alias_desc
-            for s, t in tables:
-                aliases[(s, t)] = maker(t)
-
-            # Monta SELECT usando aliases
-            select_parts = []
-            for schema, table, column in columns:
-                alias = aliases.get((schema, table), maker(table))
-                select_parts.append(f"{alias}.[{column}]")
-
-            select_clause = "SELECT " + ", ".join(select_parts)
-        
-        # Decide primeira tabela (FROM): usar a ordem fornecida em `tables`.
-        # A primeira tabela na lista é tratada como tabela principal (FROM);
-        # as demais serão adicionadas como JOINs na mesma ordem em que foram selecionadas.
-        first_schema, first_table = tables[0]
-
-        # FROM clause
-        if alias_mode == 'none':
-            from_clause = f"FROM [{first_schema}].[{first_table}]" + NOLOCK
-        else:
-            first_alias = aliases.get((first_schema, first_table))
-            from_clause = f"FROM [{first_schema}].[{first_table}] AS {first_alias}" + NOLOCK
-        
-        # Monta JOINs
-        join_clauses = []
-        if len(tables) > 1:
-            # Preserve the selection order: use tables as provided (first is FROM, rest are JOINs)
-            ordered = list(tables)
-            for i in range(1, len(ordered)):
-                schema, table = ordered[i]
-                prev_schema, prev_table = ordered[i-1]
-                
-                # Determina tipo de JOIN
-                join_key = (prev_table, table)
-                join_type = joins.get(join_key, JoinType.INNER) if joins else JoinType.INNER
-                
-                # Encontra relacionamento
-                fk = self.find_relationship(prev_table, table)
-                
-                if fk:
-                    if alias_mode == 'none':
-                        # usa qualificados
-                        if fk.fk_table == prev_table:
-                            join_clauses.append(
-                                f"{join_type.value} [{schema}].[{table}]" + NOLOCK + " "
-                                f"ON [{prev_schema}].[{prev_table}].[{fk.fk_column}] = [{schema}].[{table}].[{fk.pk_column}]"
-                            )
-                        else:
-                            join_clauses.append(
-                                f"{join_type.value} [{schema}].[{table}]" + NOLOCK + " "
-                                f"ON [{schema}].[{table}].[{fk.fk_column}] = [{prev_schema}].[{prev_table}].[{fk.pk_column}]"
-                            )
-                    else:
-                        curr_alias = aliases.get((schema, table))
-                        prev_alias = aliases.get((prev_schema, prev_table))
-                        if fk.fk_table == prev_table:
-                            # prev_table -> table
-                            join_clauses.append(
-                                f"{join_type.value} [{schema}].[{table}] AS {curr_alias}" + NOLOCK + " "
-                                f"ON {prev_alias}.[{fk.fk_column}] = {curr_alias}.[{fk.pk_column}]"
-                            )
-                        else:
-                            # table -> prev_table
-                            join_clauses.append(
-                                f"{join_type.value} [{schema}].[{table}] AS {curr_alias}" + NOLOCK + " "
-                                f"ON {curr_alias}.[{fk.fk_column}] = {prev_alias}.[{fk.pk_column}]"
-                            )
-                else:
-                    # Sem relacionamento encontrado - gera JOIN sem condição (usuário deve corrigir)
-                    if alias_mode == 'none':
-                        join_clauses.append(
-                            f"{join_type.value} [{schema}].[{table}]" + NOLOCK + " "
-                            f"ON 1=1 -- AVISO: Relacionamento não encontrado entre [{prev_schema}].[{prev_table}] e [{schema}].[{table}]; ajuste manualmente"
-                        )
-                    else:
-                        # sem relacionamento e usando aliases: calcula prev_alias antes de usar
-                        curr_alias = aliases.get((schema, table))
-                        prev_alias = aliases.get((prev_schema, prev_table))
-                        join_clauses.append(
-                            f"{join_type.value} [{schema}].[{table}] AS {curr_alias}" + NOLOCK + " "
-                            f"ON 1=1 -- AVISO: Relacionamento não encontrado entre {prev_alias or prev_table} e {curr_alias}; ajuste manualmente"
-                        )
-        
-        # Ajusta WHERE para usar aliases quando possível
-        wc = ""
-        if where_clause and where_clause.strip():
-            wc = where_clause
-            if alias_mode != 'none':
-                for (s, t), alias in aliases.items():
-                    # substitui formas com colchetes e sem colchetes
-                    wc = wc.replace(f"[{s}].[{t}].", f"{alias}.")
-                    wc = wc.replace(f"{s}.{t}.", f"{alias}.")
-
-        # Monta WHERE somente se houver filtros reais (não gerar WHERE 1=1 padrão)
-        where_part = ""
-        if wc and wc.strip():
-            where_part = f"WHERE {wc}"
-        
-        # Query completa
-        query = f"{select_clause}\n{from_clause}\n"
-        if join_clauses:
-            query += "\n".join(join_clauses) + "\n"
-        if where_part:
-            query += where_part
-        
-        return query
-    
-    def execute_query(self, query: str) -> Tuple[List[str], List[Tuple]]:
-        """
-        Executa uma query e retorna (colunas, dados).
-        """
-        cursor = self.conn.cursor()
-        cursor.execute(query)
-        
-        # Extrai nomes das colunas
-        columns = [column[0] for column in cursor.description]
-        
-        # Extrai dados
-        rows = cursor.fetchall()
-        
-        cursor.close()
-        return columns, rows
-
-__all__ = ['QueryBuilder', 'JoinType', 'TableInfo', 'ColumnInfo', 'ForeignKey']
+        cur = self.conn.cursor()
+        cur.execute(sql, (schema, table))
+        rows = cur.fetchall()
+        cur.close()
+        return [r[0] for r in rows]

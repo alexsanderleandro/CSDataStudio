@@ -1,0 +1,1167 @@
+﻿dbo;AcessosPortaria;BASE TABLE
+dbo;AdministradorasCartaoCredito;BASE TABLE
+dbo;Agenda;BASE TABLE
+dbo;AgendaEventos;BASE TABLE
+dbo;AgendaEventosAtendimento;BASE TABLE
+dbo;AgendaEventosProdutos;BASE TABLE
+dbo;AgendaEventosUsuarios;BASE TABLE
+dbo;AjusteApuracaoPISCOFINS;BASE TABLE
+dbo;AjusteICMS;BASE TABLE
+dbo;AjusteICMSDocumentoFiscal;BASE TABLE
+dbo;AjusteICMSTabela52;BASE TABLE
+dbo;AjusteIPI;BASE TABLE
+dbo;ANSServicos;BASE TABLE
+dbo;aPagar;BASE TABLE
+dbo;aPagarAnexos;BASE TABLE
+dbo;aPagarAutorizacoes;BASE TABLE
+dbo;aPagarBaixa;BASE TABLE
+dbo;aPagarDevolucao;BASE TABLE
+dbo;aPagarDistribFinanceira;BASE TABLE
+dbo;aPagarPISCOFINS;BASE TABLE
+dbo;aPagarRastreamentoEletronico;BASE TABLE
+dbo;aPagarRecibo;BASE TABLE
+dbo;ApagarReinf;BASE TABLE
+dbo;ApuracaoICMS;BASE TABLE
+dbo;AreasMesas;BASE TABLE
+dbo;aReceber;BASE TABLE
+dbo;aReceberAnexos;BASE TABLE
+dbo;aReceberBaixa;BASE TABLE
+dbo;aReceberCobranca;BASE TABLE
+dbo;aReceberCobrancaRepositorio;BASE TABLE
+dbo;aReceberConciliador;BASE TABLE
+dbo;aReceberDevolvido;BASE TABLE
+dbo;aReceberDistribFinanceira;BASE TABLE
+dbo;aReceberPortalDocumentos;BASE TABLE
+dbo;aReceberProtesto;BASE TABLE
+dbo;aReceberRemessaCNAB;BASE TABLE
+dbo;aReceberRepositorio;BASE TABLE
+dbo;aReceberSERASA;BASE TABLE
+dbo;AribaConfiguracao;BASE TABLE
+dbo;AribaPedido;BASE TABLE
+dbo;AribaPedidoItem;BASE TABLE
+dbo;ArquivosImportadosFV;BASE TABLE
+dbo;ArquivosNFe;BASE TABLE
+dbo;Assuntos;BASE TABLE
+dbo;Atendimento;BASE TABLE
+dbo;AtendimentoAnexos;BASE TABLE
+dbo;AtendimentoIteracao;BASE TABLE
+dbo;AtendimentoPrazo;BASE TABLE
+dbo;AtendimentoPrioridade;BASE TABLE
+dbo;AutorizacaoCompra;BASE TABLE
+dbo;BoletimRecebimento;BASE TABLE
+dbo;BoletimRecebimentoCarga;BASE TABLE
+dbo;BoletimRecebimentoDespesas;BASE TABLE
+dbo;BoletimRecebimentoDocumento;BASE TABLE
+dbo;Bonificacao;BASE TABLE
+dbo;BorderoDesconto;BASE TABLE
+dbo;BorderoDescontoaChequesRecebidos;BASE TABLE
+dbo;BorderoDescontoaReceber;BASE TABLE
+dbo;CAE;BASE TABLE
+dbo;CaixaBanco;BASE TABLE
+dbo;CalculoMargemContribuicao;BASE TABLE
+dbo;Campanha;BASE TABLE
+dbo;CampanhaFiltros;BASE TABLE
+dbo;CampanhaOperador;BASE TABLE
+dbo;CampanhaPedreira;BASE TABLE
+dbo;CampanhaPedreiraMix;BASE TABLE
+dbo;CampanhaPedreiraProduto;BASE TABLE
+dbo;CampanhaPesquisa;BASE TABLE
+dbo;CampanhaPesquisaResposta;BASE TABLE
+dbo;CampanhaProduto;BASE TABLE
+dbo;CamposBloqueados;BASE TABLE
+dbo;CanalVenda;BASE TABLE
+dbo;Cargas;BASE TABLE
+dbo;CargasConferencia;BASE TABLE
+dbo;CargasConferenciaItem;BASE TABLE
+dbo;CargasFusion;BASE TABLE
+dbo;CargasFusionPedidos;BASE TABLE
+dbo;CargasSituacao;BASE TABLE
+dbo;CartaCorrecao;BASE TABLE
+dbo;CategoriaProduto;BASE TABLE
+dbo;CategoriaVeiculo;BASE TABLE
+dbo;CentroCusto;BASE TABLE
+dbo;CentroCustoMensagemData;BASE TABLE
+dbo;CEPBairros;BASE TABLE
+dbo;CEPCidades;BASE TABLE
+dbo;CEPLogradouros;BASE TABLE
+dbo;ChequesEmitidos;BASE TABLE
+dbo;ChequesRecebidos;BASE TABLE
+dbo;ChequesRecebidosSituacao;BASE TABLE
+dbo;Cidades;BASE TABLE
+dbo;CilindradaVeiculo;BASE TABLE
+dbo;Cirurgias;BASE TABLE
+dbo;CirurgiasProdutos;BASE TABLE
+dbo;CirurgiasProdutosLote;BASE TABLE
+dbo;ClasseFinanceira;BASE TABLE
+dbo;ClasseFinanceiraGM;BASE TABLE
+dbo;ClasseFinanceiraGMSaldos;BASE TABLE
+dbo;ClasseFinanceiraOrcamento;BASE TABLE
+dbo;ClassificacaoAtendimento;BASE TABLE
+dbo;ClassificacaoCaixaBanco;BASE TABLE
+dbo;ClassificacaoEquipamento;BASE TABLE
+dbo;ClassificacaoProduto;BASE TABLE
+dbo;ClassificacaoRDM;BASE TABLE
+dbo;Clientes;BASE TABLE
+dbo;ClientesAnexos;BASE TABLE
+dbo;ClientesAutorizacaoVenda;BASE TABLE
+dbo;ClientesCadastroAcessoAPI;BASE TABLE
+dbo;ClientesCadastroPalm;BASE TABLE
+dbo;ClientesCamposAdicionais;BASE TABLE
+dbo;ClientesCartao;BASE TABLE
+dbo;ClientesCartaoFidelidade;BASE TABLE
+dbo;ClientesCodContabil;BASE TABLE
+dbo;ClientesComissaoProduto;BASE TABLE
+dbo;ClientesContaBancaria;BASE TABLE
+dbo;ClientesContatos;BASE TABLE
+dbo;ClientesCS;BASE TABLE
+dbo;ClientesDependente;BASE TABLE
+dbo;ClientesDescontoPromocional;BASE TABLE
+dbo;ClientesDescontoPromocionalCreditos;BASE TABLE
+dbo;ClientesEmpresa;BASE TABLE
+dbo;ClientesEmpresaProdutoSerie;BASE TABLE
+dbo;ClientesEnderecosAdicionais;BASE TABLE
+dbo;ClientesEnderecosAdicionaisPedagio;BASE TABLE
+dbo;ClientesGrupoEstoque;BASE TABLE
+dbo;ClientesHistorico;BASE TABLE
+dbo;ClientesHistoricoCampos;BASE TABLE
+dbo;ClientesMedico;BASE TABLE
+dbo;ClientesProdutos;BASE TABLE
+dbo;ClientesRastreamentoEletronico;BASE TABLE
+dbo;ClientesRegraNegocio;BASE TABLE
+dbo;ClientesRelacionados;BASE TABLE
+dbo;ClientesSPC;BASE TABLE
+dbo;ClientesTelevenda;BASE TABLE
+dbo;ClienteVendedor;BASE TABLE
+dbo;CNAE;BASE TABLE
+dbo;CNPJCNAE;BASE TABLE
+dbo;CnsAgendaEventosAtendimento;VIEW
+dbo;CnsAgendaSantalmas;VIEW
+dbo;CnsAlteracaoColetivaaReceber;VIEW
+dbo;CnsaPagar;VIEW
+dbo;CnsaPagar01;VIEW
+dbo;CnsaPagarAberto;VIEW
+dbo;CnsAPagarAPI;VIEW
+dbo;CnsaPagarLancamentoFuturo;VIEW
+dbo;CnsAPagarReceberAPI;VIEW
+dbo;CnsaReceber;VIEW
+dbo;CnsaReceberAberto;VIEW
+dbo;CnsAReceberAPI;VIEW
+dbo;CnsaReceberDevolvido;VIEW
+dbo;CnsaReceberEmailAviso;VIEW
+dbo;CnsAreceberIntegracaoAPI;VIEW
+dbo;CnsAreceberNotaSaidaAdicionais;VIEW
+dbo;CnsAreceberNotificacaoAtraso;VIEW
+dbo;CnsaReceberObras;VIEW
+dbo;CnsaReceberPortalDocumentos;VIEW
+dbo;CnsaReceberPortalDocumentosComparacao;VIEW
+dbo;CnsAtendimento;VIEW
+dbo;CnsAtendimentoAgenda;VIEW
+dbo;CnsAtributoIntegracaoEcommerce;VIEW
+dbo;CnsBackupBD;VIEW
+dbo;CnsBoletimRecebimento;VIEW
+dbo;CnsBoletimRecebimento01;VIEW
+dbo;CnsCampos;VIEW
+dbo;CnsCargaHoraria;VIEW
+dbo;cnsCargasFusionDisponiveis;VIEW
+dbo;cnsCargasFusionEnviarNaoUtilizada;VIEW
+dbo;CnsCEP;VIEW
+dbo;CnsCEPCidades;VIEW
+dbo;CnsCEPLogradouros;VIEW
+dbo;CnsChavesEstrangeiras;VIEW
+dbo;CnsChavesPrimaria;VIEW
+dbo;CnsChequesRecebidos;VIEW
+dbo;CnsCirurgias;VIEW
+dbo;CnsClasseFinanceira;VIEW
+dbo;CnsClassificacao_IBSCBS;VIEW
+dbo;CnsClienteDependenteAPI;VIEW
+dbo;CnsClientes;VIEW
+dbo;CnsClientesCadastroAcessoAPI;VIEW
+dbo;CnsClientesDescontoPromocional;VIEW
+dbo;CnsClientesDescontoPromocionalCreditos;VIEW
+dbo;CnsClientesDescontoPromocionalDebitos;VIEW
+dbo;CnsClientesDescontoPromocionalExtrato;VIEW
+dbo;CnsClientesEmAtrasos;VIEW
+dbo;CnsClientesProspectes;VIEW
+dbo;CnsCodigosAdicionais;VIEW
+dbo;CnsCodigosEquivalentes;VIEW
+dbo;CnsComandaAPI;VIEW
+dbo;CnsCompras;VIEW
+dbo;CnsComprasRefPeriodo;VIEW
+dbo;CnsConciliacaoBancaria;VIEW
+dbo;CnsConciliacaoWebAreceber;VIEW
+dbo;CnsConcluiRDM;VIEW
+dbo;CnsContagemFisicaGrade;VIEW
+dbo;CnsContratoAtivo;VIEW
+dbo;CnsContratoCliente;VIEW
+dbo;CnsContratos;VIEW
+dbo;CnsContratosProdutos;VIEW
+dbo;CnsControleEntrega;VIEW
+dbo;CnsControleEntregaDashBoard;VIEW
+dbo;CnsControleEntregaDocumentos;VIEW
+dbo;CnsControleEntregaPalete;VIEW
+dbo;CnsControleEntregaPedidosCarga;VIEW
+dbo;CnsControleEntregaProdutosCarga;VIEW
+dbo;CnsCoresMontadora;VIEW
+dbo;CnsCoresVeiculos;VIEW
+dbo;CnsCotacaoCompra;VIEW
+dbo;CnsCozinha;VIEW
+dbo;CnsCQSRegistros;VIEW
+dbo;CnsCriticaPedidos;VIEW
+dbo;CnsCST_IBSCBS;VIEW
+dbo;CnsCSTPisCofins;VIEW
+dbo;CnsCustoInsumo;VIEW
+dbo;CnsDadosClientePorTokenAPI;VIEW
+dbo;CnsDadosNFe;VIEW
+dbo;CnsDadosNotaSaidaServico;VIEW
+dbo;CnsDataAtual;VIEW
+dbo;CnsDemonstrativoCaixa;VIEW
+dbo;CnsDemonstrativoClasseFinanceira;VIEW
+dbo;CnsDemonstrativoDespesa;VIEW
+dbo;CnsDemonstrativoEstoque;VIEW
+dbo;CnsDemonstrativoFaturamento;VIEW
+dbo;CnsDemonstrativoResultadoFinanceiro;VIEW
+dbo;CnsDescarga;VIEW
+dbo;CnsDescargaProdutos;VIEW
+dbo;CnsDespesasFixa;VIEW
+dbo;CnsDevolucaoOrcamentoCheckout;VIEW
+dbo;CnsDevolucaoVendaCheckout;VIEW
+dbo;CnsDevolucaoVendaProdutosDisponiveis;VIEW
+dbo;CnsDevolucoes;VIEW
+dbo;CnsDiferencaICMSReducao;VIEW
+dbo;CnsDocumentosBaixadosPortalDocumentos;VIEW
+dbo;CnsDocumentosPortalDocumentosComparacao;VIEW
+dbo;CnsEmpresas;VIEW
+dbo;CnsEspecieVeiculos;VIEW
+dbo;CnsEstoquePorSerieLote;VIEW
+dbo;CnsEtiquetaPedidos;VIEW
+dbo;CnsFornecedorProduto;VIEW
+dbo;CnsFotos;VIEW
+dbo;CnsFusionCargaEnvio;VIEW
+dbo;cnsFusionCliente;VIEW
+dbo;cnsFusionMotorista;VIEW
+dbo;CnsFusionNotaFiscal;VIEW
+dbo;CnsFusionPedidos;VIEW
+dbo;CnsFusionPedidosExcluir;VIEW
+dbo;CnsFusionPedidosTransferidos;VIEW
+dbo;CnsFusionProdutos;VIEW
+dbo;cnsFusionVeiculo;VIEW
+dbo;CnsGerenciamentoBoletos;VIEW
+dbo;CnsGerenciamentoBoletosRetorno;VIEW
+dbo;CnsGerenciamentoContrato;VIEW
+dbo;CnsGerenciamentoContratoItem;VIEW
+dbo;CnsGerenciamentoDocumentosProtesto;VIEW
+dbo;CnsGerenciamentoEDFReinf;VIEW
+dbo;CnsGerenciamentoNotaFiscal;VIEW
+dbo;CnsGerenciamentoPedidosFusion;VIEW
+dbo;CnsGerenciamentoProducao;VIEW
+dbo;CnsGerenciamentoProducaoAgrupado;VIEW
+dbo;CnsGradeProdutoIntegracaoEcommerce;VIEW
+dbo;CnsGridConsultaBasico;VIEW
+dbo;CnsHistoricoComandaAPI;VIEW
+dbo;CnsHistoricoCreditoAPI;VIEW
+dbo;CnsHistoricoNotaFiscalAPI;VIEW
+dbo;CnsImoveis;VIEW
+dbo;cnsIntegracaoAPICascatinhaEnvioCancelamentoPagamento;VIEW
+dbo;cnsIntegracaoAPICascatinhaEnvioDocumento;VIEW
+dbo;cnsIntegracaoAPICascatinhaEnvioExclusao;VIEW
+dbo;cnsIntegracaoAPICascatinhaEnvioPagamento;VIEW
+dbo;cnsIntegracaoAPICascatinhaMensalidades;VIEW
+dbo;cnsIntegracaoAPICascatinhaPendencia;VIEW
+dbo;CnsIntegracaoClientesMtrix;VIEW
+dbo;CnsIntegracaoEcommerce;VIEW
+dbo;CnsIntegracaoEcommerceCorreiosRastreamento;VIEW
+dbo;CnsIntegracaoEcommerceEstoque;VIEW
+dbo;CnsIntegracaoEcommercePreco;VIEW
+dbo;CnsIntegracaoEcommerceProdutos;VIEW
+dbo;CnsIntegracaoEcommerceProdutosCamposVariavel;VIEW
+dbo;CnsIntegracaoEcommerceStatus;VIEW
+dbo;CnsIntegracaoEstoqueProdutoMtrix;VIEW
+dbo;CnsIntegracaoForcaVendasMtrix;VIEW
+dbo;CnsIntegracaoIQVIAEstoque;VIEW
+dbo;CnsIntegracaoIQVIANotaSaida;VIEW
+dbo;CnsIntegracaoNexxera;VIEW
+dbo;CnsIntegracaoProdutoMtrix;VIEW
+dbo;CnsIntegracaoProdutosEstoqueDanone;VIEW
+dbo;CnsIntegracaoVendasDanone;VIEW
+dbo;CnsIntegracaoVendasMtrix;VIEW
+dbo;CnsIntegracaoVisitasDanone;VIEW
+dbo;CnsIntegradorHistorico;VIEW
+dbo;CnsIntegradorRotinaTabela;VIEW
+dbo;CnsInventarioGravado;VIEW
+dbo;CnsLancamentos;VIEW
+dbo;CnsLocalEstoque;VIEW
+dbo;CnsLoteNFSe;VIEW
+dbo;CnsManifestacaoDestinatario;VIEW
+dbo;cnsMensagemAPPAreceber;VIEW
+dbo;cnsMensagemAPPCozinha;VIEW
+dbo;cnsMensagemAPPEnviar;VIEW
+dbo;CnsMenuFavoritos;VIEW
+dbo;CnsMesas;VIEW
+dbo;CnsMesasGrupoEstoque;VIEW
+dbo;CnsMesasProduto;VIEW
+dbo;CnsMovimentoCaixaBanco;VIEW
+dbo;CnsMovimentoCaixaBanco01;VIEW
+dbo;CnsMovimentoCaixaBanco02;VIEW
+dbo;CnsMovimentoCaixaBancoConciliacao;VIEW
+dbo;CnsMovimentoCaixaBancoDespesas;VIEW
+dbo;CnsMovimentoCaixaBancoReceitas;VIEW
+dbo;CnsMovimentoCalculoUnitarioST;VIEW
+dbo;CnsMovimentoConsignado;VIEW
+dbo;CnsMovimentoEstoque;VIEW
+dbo;CnsMovimentoEstoqueDANFE;VIEW
+dbo;CnsMovimentoEstoqueEntradas;VIEW
+dbo;CnsMovimentoEstoqueNF;VIEW
+dbo;CnsMovimentoEstoqueNFCe;VIEW
+dbo;CnsMovimentoEstoqueNFe;VIEW
+dbo;CnsMovimentoEstoqueNFeDevolucao;VIEW
+dbo;CnsMovimentoEstoquePedidos;VIEW
+dbo;CnsMovimentoEstoqueSaida;VIEW
+dbo;CnsNaturezaOperacao;VIEW
+dbo;CnsNFCeNaoTransmitidas;VIEW
+dbo;CnsNFCeNaoTransmitidasGeral;VIEW
+dbo;CnsNFe;VIEW
+dbo;CnsNFEntradasFinalidadeExportacao;VIEW
+dbo;CnsNotaEntrada;VIEW
+dbo;CnsNotaEntradaAPI;VIEW
+dbo;CnsNotaEntradaAtivoPermanente;VIEW
+dbo;CnsNotaEntradaAutorizadasConsiderandoOfflines;VIEW
+dbo;CnsNotaEntradaAutorizadasDesconsiderandoOfflines;VIEW
+dbo;CnsNotaEntradaCustoAnterior;VIEW
+dbo;CnsNotaEntradaDANFE;VIEW
+dbo;CnsNotaEntradaICMS;VIEW
+dbo;CnsNotaEntradaICMSTipoProduto;VIEW
+dbo;CnsNotaEntradaImpostos;VIEW
+dbo;CnsNotaEntradaNaoAutorizadasConsiderandoOfflines;VIEW
+dbo;CnsNotaEntradaNaoAutorizadasDesconsiderandoOfflines;VIEW
+dbo;CnsNotaFiscalReferenciada;VIEW
+dbo;CnsNotaSaida;VIEW
+dbo;CnsNotaSaidaAPI;VIEW
+dbo;CnsNotaSaidaAutorizadasConsiderandoOfflines;VIEW
+dbo;CnsNotaSaidaAutorizadasDesconsiderandoOfflines;VIEW
+dbo;CnsNotaSaidaCozinha;VIEW
+dbo;CnsNotaSaidaDANFE;VIEW
+dbo;CnsNotaSaidaEnvioCorreios;VIEW
+dbo;CnsNotaSaidaICMS;VIEW
+dbo;CnsNotaSaidaICMSTipoProduto;VIEW
+dbo;CnsNotaSaidaImportada;VIEW
+dbo;CnsNotaSaidaImpostos;VIEW
+dbo;CnsNotaSaidaNaoAutorizadasConsiderandoOfflines;VIEW
+dbo;CnsNotaSaidaNaoAutorizadasDesconsiderandoOfflines;VIEW
+dbo;CnsNotaSaidaVendedor;VIEW
+dbo;CnsNotasDevolvidasNotasDescontos;VIEW
+dbo;CnsNotificacoesAPI;VIEW
+dbo;CnsObjects;VIEW
+dbo;CnsObrasImoveisClientes;VIEW
+dbo;CnsOrcamentoProdutos;VIEW
+dbo;CnsOrcamentos;VIEW
+dbo;CnsPaises;VIEW
+dbo;CnsPaletesProdutos;VIEW
+dbo;CnsPassarRDMSprint;VIEW
+dbo;CnsPedidoCompra;VIEW
+dbo;CnsPedidoCompra01;VIEW
+dbo;CnsPedidos;VIEW
+dbo;CnsPedidosCliente;VIEW
+dbo;CnsPedidosClienteProdutos;VIEW
+dbo;CnsPedidosProducaoControle;VIEW
+dbo;CnsPedidosProducaoControleItem;VIEW
+dbo;CnsPedidosProdutos;VIEW
+dbo;CnsProducao;VIEW
+dbo;CnsProducaoControleCancelamentoFaturamentoExpedicao;VIEW
+dbo;CnsProducaoControleExpedicao;VIEW
+dbo;CnsProducaoControleFaturamentoExpedicao;VIEW
+dbo;CnsProducaoControlePerda;VIEW
+dbo;CnsProducaoPerdaInsumos;VIEW
+dbo;CnsProdutos;VIEW
+dbo;CnsProdutos_1;VIEW
+dbo;CnsProdutosCodigosAdicionais;VIEW
+dbo;CnsProdutosComplemento;VIEW
+dbo;CnsProdutosConsignados;VIEW
+dbo;CnsProdutosEquivalentes01;VIEW
+dbo;CnsProdutosFichaTecnica;VIEW
+dbo;CnsProdutosGrade;VIEW
+dbo;CnsProdutosGradeSerie;VIEW
+dbo;CnsProdutosGradeServicos;VIEW
+dbo;CnsProdutosLista;VIEW
+dbo;CnsProdutosLocalEstoque;VIEW
+dbo;CnsProdutosLote;VIEW
+dbo;CnsProdutosSerie;VIEW
+dbo;CnsProdutosSoftware;VIEW
+dbo;CnsQuadroVendasVeiculos;VIEW
+dbo;CnsRDM;VIEW
+dbo;CnsRDMAberta;VIEW
+dbo;CnsRDMOrcamento;VIEW
+dbo;CnsRDMs;VIEW
+dbo;CnsRegistroEntrada;VIEW
+dbo;CnsRegistroSaida;VIEW
+dbo;CnsRelatorioCarga;VIEW
+dbo;CnsRelatorioControleTransporte;VIEW
+dbo;CnsRelatorioControleTransporteMovimento;VIEW
+dbo;CnsRelSinteticoComprasNoMes;VIEW
+dbo;CnsRequisicaoCompra;VIEW
+dbo;CnsRestoreBD;VIEW
+dbo;CnsResumoSprint;VIEW
+dbo;CnsResumoSprintPorSituacao;VIEW
+dbo;CnsRNTipoTributacao;VIEW
+dbo;CnsSituacaoProdutoCEST;VIEW
+dbo;CnsTabelaCampos;VIEW
+dbo;CnsTabelaEspecial;VIEW
+dbo;CnsTabelaEspecial01;VIEW
+dbo;CnsTabelaEspecialProdutos;VIEW
+dbo;CnsTabelaICM;VIEW
+dbo;CnsTabelaIndices;VIEW
+dbo;CnsTabelaPrecos;VIEW
+dbo;CnsTicketSuprimentoSangria;VIEW
+dbo;CnsTipoCombustiveis;VIEW
+dbo;CnsTipoCombustivelOS;VIEW
+dbo;CnsTipoGrade;VIEW
+dbo;CnsTipoGradeIntegracaoEcommerce;VIEW
+dbo;CnsTipoGradeValorIntegracaoEcommerce;VIEW
+dbo;CnsTipoPintura;VIEW
+dbo;CnsTipoVeiculos;VIEW
+dbo;CnsTransportadores;VIEW
+dbo;CnsUsuarios;VIEW
+dbo;CnsUtilizacaoGerenciador;VIEW
+dbo;CnsValorICMSReducaoAliquota;VIEW
+dbo;CnsValorICMSReducaoMovimento;VIEW
+dbo;CnsVeiculos;VIEW
+dbo;CnsVendasBonificacaoRefFaturamento;VIEW
+dbo;CnsVendasBonificacaoRefPeriodo;VIEW
+dbo;CnsVendasFichaTecnicaRefPeriodo;VIEW
+dbo;CnsVendasRefFaturamento;VIEW
+dbo;CnsVendasRefPeriodo;VIEW
+dbo;CnsVendaTriangular;VIEW
+dbo;CnsVendaTriangularMovimento;VIEW
+dbo;CnsVendedores;VIEW
+dbo;CnsVendedoresAdministrativoCBMAP;VIEW
+dbo;CnsVendedoresCotas;VIEW
+dbo;CnsViewCampos;VIEW
+dbo;CnsWebServiceNFe;VIEW
+dbo;CnsWMSEndereco;VIEW
+dbo;CnsWMSEnderecoLote;VIEW
+dbo;CnsWMSOrdemServicoExecucao;VIEW
+dbo;CnsWMSOSEnderecamentoMovimentoEstoque;VIEW
+dbo;CnsWMSProdutos;VIEW
+dbo;Cobrancas;BASE TABLE
+dbo;CobrancasAReceber;BASE TABLE
+dbo;CobrancasChequesRecebidos;BASE TABLE
+dbo;Comanda;BASE TABLE
+dbo;ComandaControleAbertura;BASE TABLE
+dbo;ComandaMesa;BASE TABLE
+dbo;ComandaPagamento;BASE TABLE
+dbo;ComandaPagamentoProduto;BASE TABLE
+dbo;ComandaProduto;BASE TABLE
+dbo;ComandaTransferencia;BASE TABLE
+dbo;ComponenteModulo;BASE TABLE
+dbo;ComponenteProduto;BASE TABLE
+dbo;ComportamentoCliente;BASE TABLE
+dbo;ConcessionariaPedagio;BASE TABLE
+dbo;ConciliacaoBancaria;BASE TABLE
+dbo;ConciliacaoBancariaSaldo;BASE TABLE
+dbo;CondicaoPagamento;BASE TABLE
+dbo;CondicaoPagamentoDesconto;BASE TABLE
+dbo;CondicaoPagamentoEmpresa;BASE TABLE
+dbo;CondicaoPagamentoParcelas;BASE TABLE
+dbo;CondicaoPagamentoSerie;BASE TABLE
+dbo;CondicaoPagamentoVendedores;BASE TABLE
+dbo;ConferenciaPedidoCompra;BASE TABLE
+dbo;ConferenciaPedidoCompraProdutos;BASE TABLE
+dbo;Conferentes;BASE TABLE
+dbo;Configuracao;BASE TABLE
+dbo;ConfiguracaoContabil;BASE TABLE
+dbo;ConfiguracaoNFe;BASE TABLE
+dbo;ConfiguracaoProposta;BASE TABLE
+dbo;ConfiguracaoSD;BASE TABLE
+dbo;ConfiguracaoVariavel;BASE TABLE
+dbo;ConfiguracoesTef;BASE TABLE
+dbo;Consulta;BASE TABLE
+dbo;ConsultaFiltro;BASE TABLE
+dbo;ConsultaLayout;BASE TABLE
+dbo;ConsultaRelatorio;BASE TABLE
+dbo;ConsultaRelatorioEmail;BASE TABLE
+dbo;ConsultaRelatorioEmailLog;BASE TABLE
+dbo;ConsultaRelatorioFV;BASE TABLE
+dbo;ConsultaSQL;BASE TABLE
+dbo;ConsultasUsuario;BASE TABLE
+dbo;Contabilista;BASE TABLE
+dbo;ContabLayout3;BASE TABLE
+dbo;ContagemFisica;BASE TABLE
+dbo;ContagemFisicaChassi;BASE TABLE
+dbo;ContagemFisicaConferencia;BASE TABLE
+dbo;ContagemFisicaGrade;BASE TABLE
+dbo;ContagemFisicaLote;BASE TABLE
+dbo;ContratoProduto;BASE TABLE
+dbo;Contratos;BASE TABLE
+dbo;ContratosAnexos;BASE TABLE
+dbo;ContratosANS;BASE TABLE
+dbo;ContratosClientes;BASE TABLE
+dbo;ContratosImoveis;BASE TABLE
+dbo;ContratosPagamentos;BASE TABLE
+dbo;ContratosProdutos;BASE TABLE
+dbo;ContratosTransferencias;BASE TABLE
+dbo;ControleAcessoAPI;BASE TABLE
+dbo;ControleEntrega;BASE TABLE
+dbo;ControleEntregaAbastecimento;BASE TABLE
+dbo;ControleEntregaAnexos;BASE TABLE
+dbo;ControleEntregaCargas;BASE TABLE
+dbo;ControleEntregaColeta;BASE TABLE
+dbo;ControleEntregaDespesas;BASE TABLE
+dbo;ControleEntregaDevolucao;BASE TABLE
+dbo;ControleEntregaPalete;BASE TABLE
+dbo;ControleEntregaPaleteComposicao;BASE TABLE
+dbo;ControleEntregaPessoal;BASE TABLE
+dbo;ControleEntregaProdutos;BASE TABLE
+dbo;CorreiosConfiguracao;BASE TABLE
+dbo;CorreiosConfiguracaoServicos;BASE TABLE
+dbo;CorreiosRemessa;BASE TABLE
+dbo;CorreiosRemessaNotaSaida;BASE TABLE
+dbo;CorVeiculo;BASE TABLE
+dbo;CotacaoCompra;BASE TABLE
+dbo;CotacaoCompraAdicionais;BASE TABLE
+dbo;CotacaoCompraAnexos;BASE TABLE
+dbo;CotacaoDolar;BASE TABLE
+dbo;Cozinha;BASE TABLE
+dbo;CQSRegistros;BASE TABLE
+dbo;CQSRegistrosAtendimento;BASE TABLE
+dbo;CQSRegistrosRDM;BASE TABLE
+dbo;CQSTipoRegistro;BASE TABLE
+dbo;CQSTipoRegistroSetor;BASE TABLE
+dbo;CriticaEstoqueItem;BASE TABLE
+dbo;CriticaPedido;BASE TABLE
+dbo;CSOSN;BASE TABLE
+dbo;CTBEntrada;BASE TABLE
+dbo;CTBSaida;BASE TABLE
+dbo;CTeCaracteristicasAdicionais;BASE TABLE
+dbo;CTeCartaCorrecao;BASE TABLE
+dbo;CTeClasseRisco;BASE TABLE
+dbo;CTeCobranca;BASE TABLE
+dbo;CTeComplementado;BASE TABLE
+dbo;CTeComponentesValorServico;BASE TABLE
+dbo;CTeComponenteValorComplementado;BASE TABLE
+dbo;CTeCTeContainer;BASE TABLE
+dbo;CTeDCL;BASE TABLE
+dbo;CTeDestinado;BASE TABLE
+dbo;CTeDestinadoEventos;BASE TABLE
+dbo;CTeDocumentoAdicional;BASE TABLE
+dbo;CteDocumentoAnterior;BASE TABLE
+dbo;CTeEmbalagemProdPerigoso;BASE TABLE
+dbo;CTeEmpresasFaturamentoCarga;BASE TABLE
+dbo;CTeEventos;BASE TABLE
+dbo;CTeFerrovias;BASE TABLE
+dbo;CTeFluxoCarga;BASE TABLE
+dbo;CTeIBS_CBS;BASE TABLE
+dbo;CTeIdentificacao;BASE TABLE
+dbo;CTeInfoCarga;BASE TABLE
+dbo;CTeInfoDispositivoValePedagio;BASE TABLE
+dbo;CTeInfoSeguroCarga;BASE TABLE
+dbo;CTeLacre;BASE TABLE
+dbo;CTeModalAereo;BASE TABLE
+dbo;CTeModalAquaviario;BASE TABLE
+dbo;CTeModalDutoviario;BASE TABLE
+dbo;CTeModalFerroviario;BASE TABLE
+dbo;CTeModalRodoviario;BASE TABLE
+dbo;CTeModalRodoviarioLacre;BASE TABLE
+dbo;CTeMotorista;BASE TABLE
+dbo;CTeMotoristaModalRodoviario;BASE TABLE
+dbo;CTeOrdemColetaTransporte;BASE TABLE
+dbo;CTePaises;BASE TABLE
+dbo;CTePISCOFINS;BASE TABLE
+dbo;CTePontoFulgor;BASE TABLE
+dbo;CTePortos;BASE TABLE
+dbo;CTeProdutosPerigosos;BASE TABLE
+dbo;CTeQtdProduto;BASE TABLE
+dbo;CTeRNTRC;BASE TABLE
+dbo;CTeSerie;BASE TABLE
+dbo;CTeTipoVolume;BASE TABLE
+dbo;CTeTransportador;BASE TABLE
+dbo;CTeVagaoContainer;BASE TABLE
+dbo;CTeVagoes;BASE TABLE
+dbo;CTeVagoesFerrovias;BASE TABLE
+dbo;CTeVeiculoNovo;BASE TABLE
+dbo;CupomItemCancelado;BASE TABLE
+dbo;CupomTemporario;BASE TABLE
+dbo;CupomTemporarioCRMBonus;BASE TABLE
+dbo;CupomTemporarioFaturamento;BASE TABLE
+dbo;CupomTemporarioPagamento;BASE TABLE
+dbo;DAVProdutosAlterados;BASE TABLE
+dbo;DeducoesPisCofins;BASE TABLE
+dbo;DespesaCalculoPreco;BASE TABLE
+dbo;DevolucaoOrcamentoProdutos;BASE TABLE
+dbo;DevolucaoVenda;BASE TABLE
+dbo;DevolucaoVendaProdutos;BASE TABLE
+dbo;DocaCarregamento;BASE TABLE
+dbo;dtproperties;BASE TABLE
+dbo;ECFDocumentosEmitidos;BASE TABLE
+dbo;EmailEnviar;BASE TABLE
+dbo;EmailEnviarAnexo;BASE TABLE
+dbo;Embarques;BASE TABLE
+dbo;Empresas;BASE TABLE
+dbo;EmpresasAutorizadoDownload;BASE TABLE
+dbo;EmpresasConfiguracaoEcommerce;BASE TABLE
+dbo;EmpresasConfiguracaoLogin;BASE TABLE
+dbo;EmpresasConfiguracaoVariavel;BASE TABLE
+dbo;EmpresasCS;BASE TABLE
+dbo;EmpresasFilial;BASE TABLE
+dbo;EmpresasInscricaoEstado;BASE TABLE
+dbo;EmpresasLocalRetirada;BASE TABLE
+dbo;EmpresasMedicamento;BASE TABLE
+dbo;Equipamentos;BASE TABLE
+dbo;EquipamentosAnexos;BASE TABLE
+dbo;EquipamentosContador;BASE TABLE
+dbo;EquipamentosPneus;BASE TABLE
+dbo;ErroEndCli100489;BASE TABLE
+dbo;EspecialidadeMedica;BASE TABLE
+dbo;EspecieDF;BASE TABLE
+dbo;EstruturaIndices;BASE TABLE
+dbo;Etiqueta;BASE TABLE
+dbo;Exclusoes;BASE TABLE
+dbo;Farmaceuticos;BASE TABLE
+dbo;FechamentoCaixa;BASE TABLE
+dbo;FechamentoGMil;BASE TABLE
+dbo;Feriados;BASE TABLE
+dbo;FiltroForm;BASE TABLE
+dbo;FiltroFormAnexos;BASE TABLE
+dbo;FiltroFormControles;BASE TABLE
+dbo;FinalidadeTributacao;BASE TABLE
+dbo;FormaAtualizacao;BASE TABLE
+dbo;FormaPagamento;BASE TABLE
+dbo;FornecedorProduto;BASE TABLE
+dbo;FreteCidade;BASE TABLE
+dbo;FretePedreira;BASE TABLE
+dbo;FuncaoFuncionario;BASE TABLE
+dbo;FuncaoPessoal;BASE TABLE
+dbo;FuncaoPessoalAcesso;BASE TABLE
+dbo;GeneroItem;BASE TABLE
+dbo;GMDespesaCarregamento;BASE TABLE
+dbo;GNRE;BASE TABLE
+dbo;GNRENotaEntrada;BASE TABLE
+dbo;GradeColuna;BASE TABLE
+dbo;GradeLinha;BASE TABLE
+dbo;GridPesquisa;BASE TABLE
+dbo;GridPesquisaLayout;BASE TABLE
+dbo;GrupoConsulta;BASE TABLE
+dbo;GrupoEmpresa;BASE TABLE
+dbo;GrupoEstoque;BASE TABLE
+dbo;GrupoEstoqueSeriePedido;BASE TABLE
+dbo;GrupoNM;BASE TABLE
+dbo;GrupoUsuario;BASE TABLE
+dbo;GrupoUsuarioMembros;BASE TABLE
+dbo;Historico;BASE TABLE
+dbo;HistoricoPrecoTabelaPercComissao;BASE TABLE
+dbo;HorarioTrabalho;BASE TABLE
+dbo;Imoveis;BASE TABLE
+dbo;ImportacaoRegistro;BASE TABLE
+dbo;IndicadorVenda;BASE TABLE
+dbo;IndiceFinanceiro;BASE TABLE
+dbo;IndiceFinanceiroValores;BASE TABLE
+dbo;IntegracaoEcommerce;BASE TABLE
+dbo;IntegracaoKPL;BASE TABLE
+dbo;IntegradorConfiguracao;BASE TABLE
+dbo;IntegradorExclusao;BASE TABLE
+dbo;IntegradorHistorico;BASE TABLE
+dbo;IntegradorRotina;BASE TABLE
+dbo;IntegradorRotinaTabela;BASE TABLE
+dbo;IntegradorTabela;BASE TABLE
+dbo;IntegradorTabelaCampos;BASE TABLE
+dbo;InutilizacaoNFe;BASE TABLE
+dbo;InventarioGravado;BASE TABLE
+dbo;InventarioSPED;BASE TABLE
+dbo;LancamentoPadrao;BASE TABLE
+dbo;LancamentosContab;BASE TABLE
+dbo;LancamentosNM;BASE TABLE
+dbo;LayoutCNAB;BASE TABLE
+dbo;LigacaoTelefonica;BASE TABLE
+dbo;LigacaoTelefonicaAtendimento;BASE TABLE
+dbo;Linguagem;BASE TABLE
+dbo;LocalEquipamento;BASE TABLE
+dbo;LocalEstoque;BASE TABLE
+dbo;LocalEvento;BASE TABLE
+dbo;Login;BASE TABLE
+dbo;LoteNFSe;BASE TABLE
+dbo;LotesReinf;BASE TABLE
+dbo;ManifestacaoDestinatario;BASE TABLE
+dbo;Mapao;BASE TABLE
+dbo;MapaoSaldoRegiao;BASE TABLE
+dbo;MaquinaProducao;BASE TABLE
+dbo;MaquinetaTEF;BASE TABLE
+dbo;MarcacaoPonto;BASE TABLE
+dbo;MarcaProduto;BASE TABLE
+dbo;MarcaVeiculo;BASE TABLE
+dbo;MarketingContatos;BASE TABLE
+dbo;MarketingProdutos;BASE TABLE
+dbo;MarketingRelacionamento;BASE TABLE
+dbo;MarketingRelacionamentoAnexos;BASE TABLE
+dbo;MarketingVendas;BASE TABLE
+dbo;MDFeAutorizacaoDownload;BASE TABLE
+dbo;MDFeCarregamento;BASE TABLE
+dbo;MDFeCondutor;BASE TABLE
+dbo;MDFeContratante;BASE TABLE
+dbo;MDFeDocumentos;BASE TABLE
+dbo;MDFeEventos;BASE TABLE
+dbo;MDFeIdentificacao;BASE TABLE
+dbo;MDFeIdentificacaoCargas;BASE TABLE
+dbo;MDFeInfoSeguroCarga;BASE TABLE
+dbo;MDFeLacres;BASE TABLE
+dbo;MDFeModalRodoviario;BASE TABLE
+dbo;MDFePagamento;BASE TABLE
+dbo;MDFePagamentoComponente;BASE TABLE
+dbo;MDFePagamentoPrazo;BASE TABLE
+dbo;MDFePamCardRota;BASE TABLE
+dbo;MDFePamCardViagem;BASE TABLE
+dbo;MDFePercurso;BASE TABLE
+dbo;MDFeValePedagio;BASE TABLE
+dbo;MensagensCliente;BASE TABLE
+dbo;MensagensNota;BASE TABLE
+dbo;MensagensProduto;BASE TABLE
+dbo;MensagensUsuario;BASE TABLE
+dbo;MenuEstrutura;BASE TABLE
+dbo;MenuEstruturaControles;BASE TABLE
+dbo;MenuEstruturaFuncaoPessoal;BASE TABLE
+dbo;MenuFavoritos;BASE TABLE
+dbo;MenuHistorico;BASE TABLE
+dbo;Mesas;BASE TABLE
+dbo;Metadados;BASE TABLE
+dbo;MixIdealTipoAtividade;BASE TABLE
+dbo;MixUsualCliente;BASE TABLE
+dbo;ModeloDF;BASE TABLE
+dbo;ModeloProduto;BASE TABLE
+dbo;ModeloVeiculo;BASE TABLE
+dbo;Modulos;BASE TABLE
+dbo;Moedas;BASE TABLE
+dbo;MoedasCotacao;BASE TABLE
+dbo;MotivoAberturaGaveta;BASE TABLE
+dbo;MotivoAtendimento;BASE TABLE
+dbo;MotivoCancelamentoContrato;BASE TABLE
+dbo;MotivoCorte;BASE TABLE
+dbo;MotivoDesoneracaoICMS;BASE TABLE
+dbo;MotivoDevolucao;BASE TABLE
+dbo;MotivoLiberacaoCartao;BASE TABLE
+dbo;MotivoReprovacao;BASE TABLE
+dbo;MotivoVisitaNegativa;BASE TABLE
+dbo;MovimentoCaixaBanco;BASE TABLE
+dbo;MovimentoCaixaBancoAnexos;BASE TABLE
+dbo;MovimentoCaixaBancoAPagar;BASE TABLE
+dbo;MovimentoCaixaBancoAReceber;BASE TABLE
+dbo;MovimentoCaixaBancoNFE;BASE TABLE
+dbo;MovimentoCaixaBancoNFS;BASE TABLE
+dbo;MovimentoCaixaBancoRepositorio;BASE TABLE
+dbo;MovimentoCaixabancoTEF;BASE TABLE
+dbo;MovimentoEstoque;BASE TABLE
+dbo;MovimentoEstoqueAdicionais;BASE TABLE
+dbo;MovimentoEstoqueCancelado;BASE TABLE
+dbo;MovimentoEstoqueCI;BASE TABLE
+dbo;MovimentoEstoqueDevolucao;BASE TABLE
+dbo;MovimentoEstoqueECF;BASE TABLE
+dbo;MovimentoEstoqueICMS;BASE TABLE
+dbo;MovimentoEstoqueImportacao;BASE TABLE
+dbo;MovimentoEstoqueIPI;BASE TABLE
+dbo;MovimentoEstoqueNumSerie;BASE TABLE
+dbo;MovimentoEstoqueOrcamento;BASE TABLE
+dbo;MovimentoEstoquePISCOFINS;BASE TABLE
+dbo;MovimentoEstoqueRepositorio;BASE TABLE
+dbo;MovimentoEstoqueUB;BASE TABLE
+dbo;MovimentoPneus;BASE TABLE
+dbo;MovimentoVeiculo;BASE TABLE
+dbo;NaturezaCreditoPisCofins;BASE TABLE
+dbo;NaturezaOperacao;BASE TABLE
+dbo;NaturezaOperacaoEmpresa;BASE TABLE
+dbo;NaturezaOperacaoSerieDocumento;BASE TABLE
+dbo;NotaDestinada;BASE TABLE
+dbo;NotaDestinadaEvento;BASE TABLE
+dbo;NotaEntrada;BASE TABLE
+dbo;NotaEntradaAdicionais;BASE TABLE
+dbo;NotaEntradaAdicionaisNFe;BASE TABLE
+dbo;NotaEntradaAjusteICMS;BASE TABLE
+dbo;NotaEntradaAjustes;BASE TABLE
+dbo;NotaEntradaAnotacao;BASE TABLE
+dbo;NotaEntradaCartaCorrecao;BASE TABLE
+dbo;NotaEntradaCustoAnterior;BASE TABLE
+dbo;NotaEntradaDistribFinanceira;BASE TABLE
+dbo;NotaEntradaImportacao;BASE TABLE
+dbo;NotaEntradaImportacaoPISCOFINS;BASE TABLE
+dbo;NotaEntradaOutrosImpostos;BASE TABLE
+dbo;NotaEntradaPisCofins;BASE TABLE
+dbo;NotaEntradaProdutor;BASE TABLE
+dbo;NotaEntradaRegiao;BASE TABLE
+dbo;NotaEntradaTransportador;BASE TABLE
+dbo;NotaEntradaUB;BASE TABLE
+dbo;NotaFiscalEventos;BASE TABLE
+dbo;NotaSaida;BASE TABLE
+dbo;NotaSaidaAdicionais;BASE TABLE
+dbo;NotaSaidaAdicionaisNFe;BASE TABLE
+dbo;NotaSaidaAjusteICMS;BASE TABLE
+dbo;NotaSaidaAjustes;BASE TABLE
+dbo;NotaSaidaAnexos;BASE TABLE
+dbo;NotaSaidaCartaCorrecao;BASE TABLE
+dbo;NotaSaidaCondicaoPagamento;BASE TABLE
+dbo;NotaSaidaCOPEN;BASE TABLE
+dbo;NotaSaidaCRMBonus;BASE TABLE
+dbo;NotaSaidaCTe;BASE TABLE
+dbo;NotaSaidaCTR;BASE TABLE
+dbo;NotaSaidaDistribFinanceira;BASE TABLE
+dbo;NotaSaidaEmbalagem;BASE TABLE
+dbo;NotaSaidaEntrega;BASE TABLE
+dbo;NotaSaidaEntregaProdutos;BASE TABLE
+dbo;NotaSaidaExportacao;BASE TABLE
+dbo;NotaSaidaImportacao;BASE TABLE
+dbo;NotaSaidaImportacaoPISCOFINS;BASE TABLE
+dbo;NotaSaidaLoteNFSe;BASE TABLE
+dbo;NotaSaidaNFSe;BASE TABLE
+dbo;NotaSaidaObservacao;BASE TABLE
+dbo;NotaSaidaOrcamento;BASE TABLE
+dbo;NotaSaidaOutrosImpostos;BASE TABLE
+dbo;NotaSaidaPedido;BASE TABLE
+dbo;NotaSaidaRefNFe;BASE TABLE
+dbo;NotaSaidaRegiao;BASE TABLE
+dbo;NotaSaidaServicoVendedor;BASE TABLE
+dbo;NotaSaidaTransportador;BASE TABLE
+dbo;NotaSaidaUB;BASE TABLE
+dbo;Obras;BASE TABLE
+dbo;ObrasOrcamento;BASE TABLE
+dbo;OcorrenciaPonto;BASE TABLE
+dbo;Ocorrencias;BASE TABLE
+dbo;OrcamentoInativo;BASE TABLE
+dbo;OrcamentoInativoProdutos;BASE TABLE
+dbo;OrdemAtualizacao;BASE TABLE
+dbo;OrdemServico;BASE TABLE
+dbo;OrdemServicoAnexos;BASE TABLE
+dbo;OrdemServicoEquipamento;BASE TABLE
+dbo;OrdemServicoProdutos;BASE TABLE
+dbo;OrdemServicoVeiculo;BASE TABLE
+dbo;OrigemAtendimento;BASE TABLE
+dbo;OrigemIteracao;BASE TABLE
+dbo;OrigemPedido;BASE TABLE
+dbo;OrigemProduto;BASE TABLE
+dbo;OrigemProspecte;BASE TABLE
+dbo;OrigemRDM;BASE TABLE
+dbo;Paises;BASE TABLE
+dbo;Paletes;BASE TABLE
+dbo;PaletesMovimentacao;BASE TABLE
+dbo;PaletesProdutos;BASE TABLE
+dbo;PaletesProdutosLote;BASE TABLE
+dbo;Parentesco;BASE TABLE
+dbo;PastasUsuario;BASE TABLE
+dbo;PDVCaixa;BASE TABLE
+dbo;PDVCaixaFormaPagamento;BASE TABLE
+dbo;PDVCaixaTipoDocumento;BASE TABLE
+dbo;PDVReplicacaoExclusao;BASE TABLE
+dbo;Pedagio;BASE TABLE
+dbo;PedidoCompra;BASE TABLE
+dbo;PedidoCompraDistribFinanceira;BASE TABLE
+dbo;PedidoCompraParcelas;BASE TABLE
+dbo;PedidoCompraProdutos;BASE TABLE
+dbo;PedidoCompraProdutosFichaTecnica;BASE TABLE
+dbo;Perguntas;BASE TABLE
+dbo;Pesagem;BASE TABLE
+dbo;PesagemNM;BASE TABLE
+dbo;PesagemVeiculo;BASE TABLE
+dbo;Pesquisas;BASE TABLE
+dbo;PesquisasPerguntas;BASE TABLE
+dbo;Pessoal;BASE TABLE
+dbo;PlanilhaManutencao;BASE TABLE
+dbo;Portadores;BASE TABLE
+dbo;PreOrdemServico;BASE TABLE
+dbo;PreOrdemServicoAnexos;BASE TABLE
+dbo;PreOrdemServicoProdutos;BASE TABLE
+dbo;PrincipioAtivo;BASE TABLE
+dbo;Problemas;BASE TABLE
+dbo;ProcedimentoCirurgico;BASE TABLE
+dbo;ProcedimentoCirurgicoConvenio;BASE TABLE
+dbo;ProcedimentoCirurgicoProdutos;BASE TABLE
+dbo;ProcessoProducao;BASE TABLE
+dbo;Producao;BASE TABLE
+dbo;ProducaoControle;BASE TABLE
+dbo;ProducaoControleExpedicao;BASE TABLE
+dbo;ProducaoControleExpedicaoProdutos;BASE TABLE
+dbo;ProducaoControleFase;BASE TABLE
+dbo;ProducaoControleHistorico;BASE TABLE
+dbo;ProducaoControleObservacao;BASE TABLE
+dbo;ProducaoControlePerda;BASE TABLE
+dbo;ProducaoCozinha;BASE TABLE
+dbo;ProducaoFuncionario;BASE TABLE
+dbo;ProducaoFuncionarioRH;BASE TABLE
+dbo;ProducaoFuncionarios;BASE TABLE
+dbo;ProducaoLotes;BASE TABLE
+dbo;ProducaoPerdas;BASE TABLE
+dbo;ProducaoProcessos;BASE TABLE
+dbo;ProducaoReprocessamento;BASE TABLE
+dbo;ProducaoRequisicoes;BASE TABLE
+dbo;ProducaoRequisicoesSubstituicaoInsumo;BASE TABLE
+dbo;Produtos;BASE TABLE
+dbo;ProdutosAnexos;BASE TABLE
+dbo;ProdutosCalculoPreco;BASE TABLE
+dbo;ProdutosCamposUsuario;BASE TABLE
+dbo;ProdutosCodigosAdicionais;BASE TABLE
+dbo;ProdutosComissaoCondicao;BASE TABLE
+dbo;ProdutosComplemento;BASE TABLE
+dbo;ProdutosConfiguracaoBalanca;BASE TABLE
+dbo;ProdutosConfiguracaoCliente;BASE TABLE
+dbo;ProdutosEquivalentes;BASE TABLE
+dbo;ProdutosEstoque;BASE TABLE
+dbo;ProdutosEstoqueCI;BASE TABLE
+dbo;ProdutosEstoqueConsignado;BASE TABLE
+dbo;ProdutosEstoqueDiarioPAF;BASE TABLE
+dbo;ProdutosEstoquePalete;BASE TABLE
+dbo;ProdutosEstoqueReceitaNaoTributadaPisCofins;BASE TABLE
+dbo;ProdutosFalta;BASE TABLE
+dbo;ProdutosFichaTecnica;BASE TABLE
+dbo;ProdutosFornecedorUnidade;BASE TABLE
+dbo;ProdutosHistoricoPrecos;BASE TABLE
+dbo;ProdutosInformacaoBalanca;BASE TABLE
+dbo;ProdutosLista;BASE TABLE
+dbo;ProdutosLocalEstoque;BASE TABLE
+dbo;ProdutosLocalEstoqueCliente;BASE TABLE
+dbo;ProdutosLote;BASE TABLE
+dbo;ProdutosMadeira;BASE TABLE
+dbo;ProdutosMarcas;BASE TABLE
+dbo;ProdutosMedicamento;BASE TABLE
+dbo;ProdutosModelos;BASE TABLE
+dbo;ProdutosPromocaoAurora;BASE TABLE
+dbo;ProdutosRegiao;BASE TABLE
+dbo;ProdutosSoftware;BASE TABLE
+dbo;ProdutosTipoAtividade;BASE TABLE
+dbo;ProdutosTransformacao;BASE TABLE
+dbo;ProdutosTransformacaoItem;BASE TABLE
+dbo;ProdutosTributacaoCliente;BASE TABLE
+dbo;ProdutosVeiculo;BASE TABLE
+dbo;ProdutosVersoes;BASE TABLE
+dbo;PropostaVenda;BASE TABLE
+dbo;PropostaVendaClientes;BASE TABLE
+dbo;PropostaVendaImoveis;BASE TABLE
+dbo;PropostaVendaPagamentos;BASE TABLE
+dbo;PropostaVendaProcessos;BASE TABLE
+dbo;PropostaVendaProdutos;BASE TABLE
+dbo;PropostaVendaServico;BASE TABLE
+dbo;Prospectes;BASE TABLE
+dbo;ProspectesContatos;BASE TABLE
+dbo;QuadroHorarioPessoal;BASE TABLE
+dbo;QuadroHorarioSetor;BASE TABLE
+dbo;RDM;BASE TABLE
+dbo;RDMAlteracaoProduto;BASE TABLE
+dbo;RDMAnalise;BASE TABLE
+dbo;RDMAnexos;BASE TABLE
+dbo;RDMArquivosAtualizacao;BASE TABLE
+dbo;RDMBranch;BASE TABLE
+dbo;RDMCausaErro;BASE TABLE
+dbo;RDMHistorico;BASE TABLE
+dbo;RDMHistoricoExecucao;BASE TABLE
+dbo;RDMMotivo;BASE TABLE
+dbo;RDMObservacao;BASE TABLE
+dbo;RDMOrcamento;BASE TABLE
+dbo;RDMSituacao;BASE TABLE
+dbo;RDMSprint;BASE TABLE
+dbo;RDMTags;BASE TABLE
+dbo;RDMTesteExecucao;BASE TABLE
+dbo;RDMTesteReprovacao;BASE TABLE
+dbo;RDMTesteRoteiro;BASE TABLE
+dbo;ReceitaNaoTributadaPisCofins;BASE TABLE
+dbo;ReciboDespesa;BASE TABLE
+dbo;ReciboDespesaValores;BASE TABLE
+dbo;ReducoesECF;BASE TABLE
+dbo;ReducoesECFAliquota;BASE TABLE
+dbo;Regioes;BASE TABLE
+dbo;RegioesDespesas;BASE TABLE
+dbo;RegistroAtivoPermanente;BASE TABLE
+dbo;RegistroFCI;BASE TABLE
+dbo;RegistroFCIProdutos;BASE TABLE
+dbo;RegistroICM_IPI;BASE TABLE
+dbo;RegistroICM_IPI_Valores;BASE TABLE
+dbo;RegistroIPI_Documentos;BASE TABLE
+dbo;RegistroPIS_COFINS;BASE TABLE
+dbo;RegistroPIS_COFINS_Valores;BASE TABLE
+dbo;RegistroSPED_E115;BASE TABLE
+dbo;RegistroSPED_F100;BASE TABLE
+dbo;RegistroTransportador;BASE TABLE
+dbo;Relacionamentos;BASE TABLE
+dbo;RelatoriosUsuario;BASE TABLE
+dbo;RelCustoCabecalho;BASE TABLE
+dbo;RelCustoItensMP;BASE TABLE
+dbo;RemessaCNAB;BASE TABLE
+dbo;Replicacao;BASE TABLE
+dbo;ReplicacaoCampos;BASE TABLE
+dbo;ReplicacaoConfiguracao;BASE TABLE
+dbo;ReplicacaoLista;BASE TABLE
+dbo;RequisicaoCompra;BASE TABLE
+dbo;RequisicaoCompraAnexos;BASE TABLE
+dbo;ResultadoNovoMeriti;BASE TABLE
+dbo;SaldoCaixaGMil;BASE TABLE
+dbo;Scripts;BASE TABLE
+dbo;SecaoNCM;BASE TABLE
+dbo;SecretariaAreaUso;BASE TABLE
+dbo;SecretariaConvidado;BASE TABLE
+dbo;SecretariaConvite;BASE TABLE
+dbo;SecretariaDiasNegadoAreaUso;BASE TABLE
+dbo;SecretariaDiasNegadoConvite;BASE TABLE
+dbo;SecretariaPerguntaLGPD;BASE TABLE
+dbo;SecretariaPessoa;BASE TABLE
+dbo;SecretariaPortaria;BASE TABLE
+dbo;SecretariaPortariaEntrada;BASE TABLE
+dbo;SecretariaPortariaEntradaConvite;BASE TABLE
+dbo;SecretariaPortariaEntradaVeiculo;BASE TABLE
+dbo;SecretariaQuinhao;BASE TABLE
+dbo;SecretariaQuinhaoPerguntaLGPD;BASE TABLE
+dbo;SecretariaTipoPessoa;BASE TABLE
+dbo;SerieNotaFiscal;BASE TABLE
+dbo;SerieNotaFiscalDispositivosNFE;BASE TABLE
+dbo;ServicosEfetuados;BASE TABLE
+dbo;ServicosNFe;BASE TABLE
+dbo;ServicosNFeCNPJ;BASE TABLE
+dbo;SetorCompra;BASE TABLE
+dbo;SetorGM;BASE TABLE
+dbo;SetorOS;BASE TABLE
+dbo;SetorProducao;BASE TABLE
+dbo;SetorProduto;BASE TABLE
+dbo;SimuladorMC;BASE TABLE
+dbo;SintegraECF;BASE TABLE
+dbo;SIPA;BASE TABLE
+dbo;SituacaoCheque;BASE TABLE
+dbo;SituacaoCirurgia;BASE TABLE
+dbo;SituacaoCliente;BASE TABLE
+dbo;SituacaoCobranca;BASE TABLE
+dbo;SituacaoImovel;BASE TABLE
+dbo;SituacaoOS;BASE TABLE
+dbo;SituacaoPedidoCliente;BASE TABLE
+dbo;SituacaoPedidoCompra;BASE TABLE
+dbo;SituacaoPedidoCompraUsuarioAutorizado;BASE TABLE
+dbo;SituacaoSEF;BASE TABLE
+dbo;SituacaoVeiculo;BASE TABLE
+dbo;SPEDInformacaoAdicionalICMS;BASE TABLE
+dbo;Sprints;BASE TABLE
+dbo;STIPI;BASE TABLE
+dbo;STPisCofins;BASE TABLE
+dbo;sysdiagrams;BASE TABLE
+dbo;TabelaCampos;BASE TABLE
+dbo;TabelaCamposHistorico;BASE TABLE
+dbo;TabelaEspecial;BASE TABLE
+dbo;TabelaEspecialClientes;BASE TABLE
+dbo;TabelaEspecialProdutos;BASE TABLE
+dbo;TabelaIBPT;BASE TABLE
+dbo;TabelaICM;BASE TABLE
+dbo;TabelaICMTipoTributacao;BASE TABLE
+dbo;TabelaImpostos;BASE TABLE
+dbo;TabelaIRRF;BASE TABLE
+dbo;TabelaNBS;BASE TABLE
+dbo;TabelaNCM;BASE TABLE
+dbo;TabelaNCMConfiguracao;BASE TABLE
+dbo;TabelaPrecos;BASE TABLE
+dbo;TabelaPrecosCliente;BASE TABLE
+dbo;TabelaReinf;BASE TABLE
+dbo;TabelaReinfNaturezaRendimento;BASE TABLE
+dbo;Tabelas;BASE TABLE
+dbo;Tags;BASE TABLE
+dbo;Tarefas;BASE TABLE
+dbo;TarefasObservacao;BASE TABLE
+dbo;Tempo;BASE TABLE
+dbo;TicketAtendimento;BASE TABLE
+dbo;TicketNaoRegistrado;BASE TABLE
+dbo;TicketVenda;BASE TABLE
+dbo;TicketVendaOcorrencia;BASE TABLE
+dbo;TIPI;BASE TABLE
+dbo;TipoAcaoVenda;BASE TABLE
+dbo;TipoAcaoVendaProxima;BASE TABLE
+dbo;TipoAnaliseRDM;BASE TABLE
+dbo;TipoAtendimento;BASE TABLE
+dbo;TipoAtividade;BASE TABLE
+dbo;TipoCaminhao;BASE TABLE
+dbo;TipoCampanha;BASE TABLE
+dbo;TipoCarga;BASE TABLE
+dbo;TipoCargaCalculo;BASE TABLE
+dbo;TipoCausaErroRDM;BASE TABLE
+dbo;TipoCliente;BASE TABLE
+dbo;TipoClienteLimiteAcrescimo;BASE TABLE
+dbo;TipoClienteLimiteDesconto;BASE TABLE
+dbo;TipoComponenteCte;BASE TABLE
+dbo;TipoCompra;BASE TABLE
+dbo;TipoConservacao;BASE TABLE
+dbo;TipoContrato;BASE TABLE
+dbo;TipoContratoANS;BASE TABLE
+dbo;TipoCreditoPisCofins;BASE TABLE
+dbo;TipoDesconto;BASE TABLE
+dbo;TipoDespesa;BASE TABLE
+dbo;TipoDocumento;BASE TABLE
+dbo;TipoDocumentoCartaoCredito;BASE TABLE
+dbo;TipoEquipamento;BASE TABLE
+dbo;TipoErroCNAB;BASE TABLE
+dbo;TipoErroRDM;BASE TABLE
+dbo;TipoEvento;BASE TABLE
+dbo;TipoGestaoCliente;BASE TABLE
+dbo;TipoGrade;BASE TABLE
+dbo;TipoItem;BASE TABLE
+dbo;TipoIteracao;BASE TABLE
+dbo;TipoLicenca;BASE TABLE
+dbo;TipoLigacao;BASE TABLE
+dbo;TipoManutencao;BASE TABLE
+dbo;TipoMedida;BASE TABLE
+dbo;TipoObra;BASE TABLE
+dbo;TipoPalete;BASE TABLE
+dbo;TipoPerdaProducao;BASE TABLE
+dbo;TipoProcessoVenda;BASE TABLE
+dbo;TipoProduto;BASE TABLE
+dbo;TipoProdutoSerie;BASE TABLE
+dbo;TipoRDM;BASE TABLE
+dbo;TipoRDMEmail;BASE TABLE
+dbo;TipoRelacaoCliente;BASE TABLE
+dbo;TipoRetornoCNAB;BASE TABLE
+dbo;TipoScript;BASE TABLE
+dbo;TipoSegmento;BASE TABLE
+dbo;TipoTotalizadorParcialECF;BASE TABLE
+dbo;TipoTransporte;BASE TABLE
+dbo;TipoTributacao;BASE TABLE
+dbo;TipoVeiculo;BASE TABLE
+dbo;TipoVendedor;BASE TABLE
+dbo;TotaisLote;BASE TABLE
+dbo;TransacaoCartao;BASE TABLE
+dbo;TransacaoCartaoRepositorio;BASE TABLE
+dbo;TransacoesTef;BASE TABLE
+dbo;TransferenciaProdutos;BASE TABLE
+dbo;TransmissaoPalm;BASE TABLE
+dbo;Transportadores;BASE TABLE
+dbo;Unidades;BASE TABLE
+dbo;Usuarios;BASE TABLE
+dbo;UsuariosConfiguracaoFormulario;BASE TABLE
+dbo;UsuariosConfiguracaoVariavel;BASE TABLE
+dbo;VarejoControleEntrega;BASE TABLE
+dbo;VarejoControleEntregaDocumentos;BASE TABLE
+dbo;Veiculos;BASE TABLE
+dbo;VendaCancelada;BASE TABLE
+dbo;VendaCanceladaProdutos;BASE TABLE
+dbo;VendedorAutorizacaoDesconto;BASE TABLE
+dbo;VendedorComissaoProduto;BASE TABLE
+dbo;VendedorDescontoComissao;BASE TABLE
+dbo;Vendedores;BASE TABLE
+dbo;VendedoresConfiguracaoVariavel;BASE TABLE
+dbo;VendedoresCotas;BASE TABLE
+dbo;VendedoresLimiteDesconto;BASE TABLE
+dbo;VendedoresMensagem;BASE TABLE
+dbo;VendedorProdutosPalm;BASE TABLE
+dbo;VisitasPalm;BASE TABLE
+dbo;WebServiceNFe;BASE TABLE
+dbo;WMSAreaArmazenagem;BASE TABLE
+dbo;WMSAreaArmazenagemWMSProduto;BASE TABLE
+dbo;WMSCargaEntrada;BASE TABLE
+dbo;WMSCargaEntradaItensConferencia;BASE TABLE
+dbo;WMSCargaEntradaNotas;BASE TABLE
+dbo;WMSCargaEntradaNotaSaida;BASE TABLE
+dbo;WMSCargaEntradaNotaSaidaItens;BASE TABLE
+dbo;WMSCargaEntradaVeiculo;BASE TABLE
+dbo;WMSEndereco;BASE TABLE
+dbo;WMSEnderecoLote;BASE TABLE
+dbo;WMSEnderecoProdutoSKU;BASE TABLE
+dbo;WMSMotivoNaoConformidade;BASE TABLE
+dbo;WMSMovimentoEstoque;BASE TABLE
+dbo;WMSOperacao;BASE TABLE
+dbo;WMSOperacaoFuncaoPessoal;BASE TABLE
+dbo;WMSOrdemServico;BASE TABLE
+dbo;WMSOrdemServicoCargaEntrada;BASE TABLE
+dbo;WMSOrdemServicoConferenciaQuantidadePeso;BASE TABLE
+dbo;WMSOrdemServicoExecucaoProdutos;BASE TABLE
+dbo;WMSOrdemServicoExecucaoProdutosDevolucao;BASE TABLE
+dbo;WMSOrdemServicoExecucaoProdutosPesoVariavel;BASE TABLE
+dbo;WMSOrdemServicoProdutos;BASE TABLE
+dbo;WMSOrdemServicoRelacionamento;BASE TABLE
+dbo;WMSProduto;BASE TABLE
+dbo;WMSProdutoSKU;BASE TABLE
+dbo;WMSProdutoSKUCodigoBarras;BASE TABLE
+dbo;WMSTipoEndereco;BASE TABLE
+dbo;WMSTipoOS;BASE TABLE
+dbo;WMSTipoOSFuncaoPessoal;BASE TABLE
+dbo;WMSUnitizador;BASE TABLE

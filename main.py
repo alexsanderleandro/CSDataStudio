@@ -1,33 +1,29 @@
-"""
-CSData Studio - Aplicação Principal
-Sistema de Business Intelligence e Análise de Dados
-"""
-import sys
-import os
-import logging
-import datetime
-import json
-import re
-import datetime as _dt
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QListWidget, QPushButton, QLabel, QLineEdit,
-    QComboBox, QTableWidget, QTableWidgetItem, QMessageBox,
-    QDialog, QDialogButtonBox, QTextEdit, QCheckBox, QRadioButton,
-    QGroupBox, QSplitter, QHeaderView, QFileDialog, QInputDialog,
-    QProgressDialog
-)
 from PyQt5.QtWidgets import QMenu, QAction, QListWidgetItem
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QEvent
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QEvent, QTimer, QDate, QObject
 from PyQt5.QtGui import QIcon, QFont, QColor
 from PyQt5.QtWidgets import QToolTip, QDialog, QVBoxLayout, QTextEdit
+from PyQt5.QtWidgets import (
+    QWidget, QLabel, QLineEdit, QComboBox, QDialogButtonBox, QMessageBox,
+    QCheckBox, QHBoxLayout, QListWidget, QPushButton, QGroupBox,
+    QDateEdit, QDoubleSpinBox, QSpinBox, QFileDialog, QInputDialog,
+    QProgressDialog, QToolButton
+)
+from PyQt5.QtWidgets import QSizePolicy
 from numbers import Number
+import logging
+import sys
+import os
+from pathlib import Path
+import re
+import datetime as _dt
+import json
+from typing import Optional, List
 
 # Imports dos módulos do projeto
 from version import Version, APP_NAME, COMPANY_NAME
 from config_manager import ConfigManager, DatabaseConfig
 from authentication import get_db_connection, verify_user
-from consulta_sql import QueryBuilder, JoinType, TableInfo
+from consulta_sql import QueryBuilder, JoinType
 from log import SessionLogger
 from saved_queries import QueryManager, SavedQuery
 from excecao import IMPEDING_COLUMNS
@@ -35,6 +31,12 @@ from chart_generator import ChartGenerator, ChartType, AggregationType
 from ai_insights import AIInsightsGenerator
 from report_generator import ReportGenerator
 from valida_sql import validar_sql, validar_sql_for_save
+# optional mapping overrides for friendly labels
+try:
+    from mapping import get_field_label
+except Exception:
+    def get_field_label(module, field_name):
+        return None
 
 class LoginDialog(QDialog):
     """Diálogo de login
@@ -267,61 +269,6 @@ def _format_iso_timestamp(ts: str) -> str:
 
     
 
-    def test_connection(self):
-        """Testa a conexão administrativa (SA ou Trusted) para o DB selecionado
-
-        Exibe a mensagem de sucesso ou o erro ODBC completo para auxiliar debug.
-        """
-        # Seleciona DB escolhido primeiro
-        selected_cfg = None
-        if self.db_combo:
-            idx = self.db_combo.currentIndex()
-            selected_cfg = self.db_options[idx]
-        else:
-            from config_manager import ConfigManager
-            selected_cfg = ConfigManager.read_config()
-
-        if not selected_cfg:
-            QMessageBox.critical(self, "Erro", "Nenhuma configuração de banco disponível para testar.")
-            return
-
-        try:
-            # Usa get_db_connection que já aplica SA/Trusted conforme o tipo
-            conn = get_db_connection(selected_cfg, None, None)
-            try:
-                cur = conn.cursor()
-                # Small sanity query
-                cur.execute("SELECT DB_NAME() AS BaseAtual")
-                row = cur.fetchone()
-                base = row[0] if row else "(desconhecida)"
-                QMessageBox.information(self, "Conexão bem-sucedida", f"Conectado com sucesso à base: {base}")
-            finally:
-                try:
-                    cur.close()
-                except Exception:
-                    pass
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-        except Exception as e:
-            # Mostra a mensagem completa do erro ODBC/pyodbc para diagnóstico
-            err_msg = str(e)
-            # Não tentamos automaticamente conectar com as credenciais informadas
-            # quando TipoBanco=SQLSERVER — por regra do sistema, a conexão ao
-            # servidor deve ser feita com SA/csloginciasoft; as credenciais
-            # digitadas são apenas para autenticação no módulo.
-            msg = (
-                "Tentativa (SA/Trusted) falhou:\n" + err_msg +
-                "\n\nObservação: por configuração, quando TipoBanco=SQLSERVER a aplicação sempre tenta\n"
-                "conectar ao servidor usando UID=sa e PWD=csloginciasoft.\n"
-                "O usuário/senha informados no formulário são utilizados apenas para validar o acesso\n"
-                "ao módulo (consulta na tabela Usuarios) e não para estabelecer a conexão com o SQL Server.\n"
-                "Se desejar tentar conectar com as credenciais informadas, use a ferramenta externa de\n"
-                "teste ou habilite esse comportamento manualmente no código."
-            )
-            QMessageBox.critical(self, "Falha na conexão", msg)
-
 class QueryBuilderTab(QWidget):
     """Aba de construção de consultas"""
     
@@ -334,11 +281,58 @@ class QueryBuilderTab(QWidget):
         self.session_logger = session_logger
         self.selected_tables = []
         self.selected_columns = []
+        # filtros parametrizados construídos via UI (cada item: (expr, params, meta?))
+        self._param_filters = []
+        # histórico de valores do WHERE para undo (pilha, multi-nível)
+        self._where_history = []
+        self._where_redo = []
+        self._where_history_limit = 50
         # Carrega mapeamento de nomes amigáveis (se houver)
         self._table_name_map = {}
         # cache de colunas por tabela (chave: 'schema.table') para reduzir consultas ao banco
         self._columns_cache = {}
+        # debug flag: ativar logs temporários para depuração da população de filtros
+        self._debug_filter_populate = True
         self.setup_ui()
+
+    def _prettify_field_label(self, raw_name: str) -> str:
+        """Gera um rótulo amigável para um nome técnico de campo.
+
+        Regras simples:
+        - Se começar com 'cod' (case-insensitive) -> prefixa com 'Código ' + resto formatado
+        - Caso contrário, converte CamelCase / snake_case em palavras separadas
+        """
+        try:
+            if not raw_name:
+                return ''
+            s = str(raw_name).strip()
+            # se já parece um label legível, retorne (tem espaços)
+            if ' ' in s:
+                return s
+            # tratar formatos [schema].[table].[column]
+            if '.' in s or '[' in s:
+                parts = re.split(r"\.|\[|\]", s)
+                parts = [p for p in parts if p]
+                s = parts[-1] if parts else s
+            # detectar prefixo cod
+            if re.match(r'^(cod|codigo)', s, re.IGNORECASE):
+                # remover prefixo cod/ codigo
+                rest = re.sub(r'^(cod|codigo)_?', '', s, flags=re.IGNORECASE)
+                # split camelCase / snake_case
+                words = re.sub('([a-z0-9])([A-Z])', r'\1 \2', rest)
+                words = words.replace('_', ' ').strip()
+                words = words.lower()
+                # capitalizar primeira letra
+                if words:
+                    return 'Código ' + words
+                else:
+                    return 'Código'
+            # default: split camelCase and underscores
+            words = re.sub('([a-z0-9])([A-Z])', r'\1 \2', s)
+            words = words.replace('_', ' ')
+            return words[0].upper() + words[1:] if words else s
+        except Exception:
+            return raw_name
 
     def _get_columns_cached(self, schema: str, table_name: str):
         """Retorna lista de ColumnInfo para a tabela, usando cache por sessão."""
@@ -435,6 +429,133 @@ class QueryBuilderTab(QWidget):
         # === PAINEL DIREITO: Configurações e Execução ===
         right_panel = QWidget()
         right_layout = QVBoxLayout()
+
+        # Módulo / Agrupamento (Query Builder metadata)
+        # Modo de consulta: metadados ou manual
+        mode_layout = QHBoxLayout()
+        mode_label = QLabel("Modo de consulta:")
+        mode_layout.addWidget(mode_label)
+        self.mode_meta_radio = QRadioButton("Metadados")
+        self.mode_manual_radio = QRadioButton("Manual")
+        self.mode_meta_radio.setChecked(True)
+        mode_layout.addWidget(self.mode_meta_radio)
+        mode_layout.addWidget(self.mode_manual_radio)
+        # Hint label para mostrar modo atual com destaque
+        self.mode_hint_label = QLabel("")
+        self.mode_hint_label.setStyleSheet('font-weight: bold;')
+        self.mode_hint_label.setContentsMargins(8, 0, 0, 0)
+        mode_layout.addWidget(self.mode_hint_label)
+        # Help icon (small) with tooltip and clickable dialog
+        self.mode_help_btn = QToolButton()
+        try:
+            # Use a standard information icon if available
+            self.mode_help_btn.setText("ℹ")
+            self.mode_help_btn.setToolTip("O que significa cada modo? Clique para mais informações.")
+            self.mode_help_btn.setCursor(Qt.PointingHandCursor)
+            self.mode_help_btn.setStyleSheet('border: none; font-size: 14px;')
+            self.mode_help_btn.clicked.connect(self.show_query_mode_help)
+            mode_layout.addWidget(self.mode_help_btn)
+        except Exception:
+            pass
+        right_layout.addLayout(mode_layout)
+
+        # conecta sinais para alternar modo
+        try:
+            # tooltips explicativos
+            self.mode_meta_radio.setToolTip('Usar metadados JSON para gerar consultas automaticamente (recomendado).')
+            self.mode_manual_radio.setToolTip('Modo manual: selecione tabelas e colunas livremente para montar sua consulta.')
+            self.mode_meta_radio.toggled.connect(lambda checked: self.set_query_mode('metadados') if checked else None)
+            self.mode_manual_radio.toggled.connect(lambda checked: self.set_query_mode('manual') if checked else None)
+        except Exception:
+            pass
+
+        right_layout.addWidget(QLabel("<b>🧭 Módulo / Agrupamento</b>"))
+        self.combo_modulo = QComboBox()
+        self.combo_modulo.setToolTip("Selecione o módulo (ex.: financeiro, comercial)")
+        # ensure combobox popup text is readable regardless of global styles
+        try:
+            # ensure the popup list items remain readable on hover/selection
+            self.combo_modulo.setStyleSheet(
+                "QComboBox { color: #000000; selection-background-color: #3874f2; }"
+                "QComboBox QAbstractItemView { color: #000000; background-color: #ffffff; selection-background-color: #3874f2; selection-color: #ffffff; }"
+                "QComboBox QAbstractItemView::item { padding: 2px 6px; }"
+                "QComboBox QAbstractItemView::item:selected { background: #3874f2; color: #ffffff; }"
+                "QComboBox QAbstractItemView::item:hover { background: #dce9ff; color: #000000; }"
+                "QListView { outline: 0; }"
+            )
+            try:
+                # also set the view palette to ensure native selection rendering uses our colors
+                v = self.combo_modulo.view()
+                pal = v.palette()
+                pal.setColor(pal.Highlight, QColor('#3874f2'))
+                pal.setColor(pal.HighlightedText, QColor('#ffffff'))
+                v.setPalette(pal)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        right_layout.addWidget(self.combo_modulo)
+
+        self.combo_agrupamento = QComboBox()
+        self.combo_agrupamento.setToolTip("Selecione o agrupamento dentro do módulo")
+        try:
+            self.combo_agrupamento.setStyleSheet(
+                "QComboBox { color: #000000; selection-background-color: #3874f2; }"
+                "QComboBox QAbstractItemView { color: #000000; background-color: #ffffff; selection-background-color: #3874f2; selection-color: #ffffff; }"
+                "QComboBox QAbstractItemView::item { padding: 2px 6px; }"
+                "QComboBox QAbstractItemView::item:selected { background: #3874f2; color: #ffffff; }"
+                "QComboBox QAbstractItemView::item:hover { background: #dce9ff; color: #000000; }"
+                "QListView { outline: 0; }"
+            )
+            try:
+                v = self.combo_agrupamento.view()
+                pal = v.palette()
+                pal.setColor(pal.Highlight, QColor('#3874f2'))
+                pal.setColor(pal.HighlightedText, QColor('#ffffff'))
+                v.setPalette(pal)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        right_layout.addWidget(self.combo_agrupamento)
+
+        # conecta sinais para manter atributos e carregar agrupamentos
+        try:
+            self.combo_modulo.currentIndexChanged.connect(self._on_modulo_selected)
+            self.combo_agrupamento.currentIndexChanged.connect(self._on_agrupamento_selected)
+        except Exception:
+            pass
+
+        # popula módulos (se possível)
+        try:
+            md_path = getattr(self.qb, 'pasta_metadados', None)
+            if md_path:
+                md = Path(md_path)
+                # se for caminho relativo, resolve relativo ao diretório do script
+                if not md.is_absolute():
+                    md = Path(os.path.dirname(__file__)) / md_path
+                if md.exists() and md.is_dir():
+                    modules = []
+                    for p in sorted(md.glob('*.json')):
+                        name = p.name
+                        if name.endswith('_agrupamentos.json'):
+                            continue
+                        modules.append(p.stem)
+                    # inserir placeholder e popular sem disparar signals automáticos
+                    try:
+                        self.combo_modulo.blockSignals(True)
+                        self.combo_modulo.addItem("-- Selecione módulo --", None)
+                        for m in modules:
+                            self.combo_modulo.addItem(m, m)
+                        # manter placeholder selecionado (nenhuma ação automática)
+                        self.combo_modulo.setCurrentIndex(0)
+                    finally:
+                        try:
+                            self.combo_modulo.blockSignals(False)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
         
         right_layout.addWidget(QLabel("<b>✅ Informações que aparecerão no relatório</b>"))
         self.selected_columns_list = QListWidget()
@@ -452,10 +573,153 @@ class QueryBuilderTab(QWidget):
 
         # Cláusula WHERE
         right_layout.addWidget(QLabel("<b>🎯 Filtros (opcional)</b>"))
+        # Filtros rápidos (apenas no modo metadados)
+        filters_box = QGroupBox("Filtros rápidos")
+        filters_layout = QHBoxLayout()
+        self.combo_filter_field = QComboBox()
+        self.combo_filter_field.setToolTip('Escolha o campo para filtrar (carregado do agrupamento)')
+        try:
+            # dropdown must be readable even when hovered; force black text on items
+            self.combo_filter_field.setStyleSheet(
+                "QComboBox { color: #000000; selection-background-color: #3874f2; }"
+                "QComboBox QAbstractItemView { color: #000000; background-color: #ffffff; selection-background-color: #3874f2; selection-color: #ffffff; }"
+                "QComboBox QAbstractItemView::item { padding: 2px 6px; }"
+                "QComboBox QAbstractItemView::item:selected { background: #3874f2; color: #ffffff; }"
+                "QComboBox QAbstractItemView::item:hover { background: #dce9ff; color: #000000; }"
+                "QListView { outline: 0; }"
+            )
+            try:
+                v = self.combo_filter_field.view()
+                pal = v.palette()
+                pal.setColor(pal.Highlight, QColor('#3874f2'))
+                pal.setColor(pal.HighlightedText, QColor('#ffffff'))
+                v.setPalette(pal)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        # initial state: no module/agrupamento selected -> disable filter field
+        try:
+            self.combo_filter_field.addItem("-- selecione módulo e agrupamento --", None)
+            self.combo_filter_field.setEnabled(False)
+        except Exception:
+            pass
+        filters_layout.addWidget(self.combo_filter_field)
+
+        self.combo_filter_op = QComboBox()
+        self.combo_filter_op.addItems(["=", "!=", ">", "<", ">=", "<=", "BETWEEN", "IN", "LIKE"])
+        self.combo_filter_op.setFixedWidth(90)
+        filters_layout.addWidget(self.combo_filter_op)
+
+        # Valor - suportamos 3 tipos de widget e alternamos visibilidade conforme o tipo do campo
+        # 1) Texto livre (QLineEdit)
+        self.filter_value_input = QLineEdit()
+        self.filter_value_input.setPlaceholderText("Valor (ou lista separada por , para IN)")
+        filters_layout.addWidget(self.filter_value_input)
+        # campo "to" para BETWEEN em texto (visível somente quando necessário)
+        self.filter_value_input_to = QLineEdit()
+        self.filter_value_input_to.setPlaceholderText("Valor 2 (usado em BETWEEN)")
+        self.filter_value_input_to.setVisible(False)
+        filters_layout.addWidget(self.filter_value_input_to)
+
+        # 2) Datas (QDateEdit)
+        self.filter_date1 = QDateEdit()
+        self.filter_date1.setCalendarPopup(True)
+        self.filter_date1.setDisplayFormat('MM-dd-yyyy')
+        try:
+            self.filter_date1.setDate(QDate.currentDate())
+        except Exception:
+            pass
+        self.filter_date1.setVisible(False)
+        filters_layout.addWidget(self.filter_date1)
+
+        self.filter_date2 = QDateEdit()
+        self.filter_date2.setCalendarPopup(True)
+        self.filter_date2.setDisplayFormat('MM-dd-yyyy')
+        try:
+            self.filter_date2.setDate(QDate.currentDate())
+        except Exception:
+            pass
+        self.filter_date2.setVisible(False)
+        filters_layout.addWidget(self.filter_date2)
+        self.filter_date2.setVisible(False)
+        filters_layout.addWidget(self.filter_date2)
+
+        # 3) Numéricos (QDoubleSpinBox)
+        self.filter_num1 = QDoubleSpinBox()
+        self.filter_num1.setRange(-1e12, 1e12)
+        self.filter_num1.setDecimals(4)
+        self.filter_num1.setVisible(False)
+        filters_layout.addWidget(self.filter_num1)
+
+        self.filter_num2 = QDoubleSpinBox()
+        self.filter_num2.setRange(-1e12, 1e12)
+        self.filter_num2.setDecimals(4)
+        self.filter_num2.setVisible(False)
+        filters_layout.addWidget(self.filter_num2)
+
+        self.btn_add_filter = QPushButton("Adicionar filtro")
+        self.btn_add_filter.clicked.connect(self._on_add_filter_clicked)
+        self.btn_add_filter.setMinimumWidth(120)
+        filters_layout.addWidget(self.btn_add_filter)
+
+        # conectar mudanças para alternar widgets conforme seleção
+        try:
+            self.combo_filter_field.currentIndexChanged.connect(self._on_filter_field_changed)
+            self.combo_filter_op.currentTextChanged.connect(self._on_filter_op_changed)
+        except Exception:
+            pass
+
+        filters_box.setLayout(filters_layout)
+        right_layout.addWidget(filters_box)
+
+        # Gerenciador de filtros parametrizados (lista + remover/limpar)
+        manage_box = QGroupBox("Gerenciar filtros")
+        manage_layout = QVBoxLayout()
+        self.filters_list = QListWidget()
+        self.filters_list.setSelectionMode(QListWidget.ExtendedSelection)
+        manage_layout.addWidget(self.filters_list)
+
+        fl_btn_layout = QHBoxLayout()
+        self.btn_remove_filter = QPushButton("➖ Remover filtro selecionado")
+        self.btn_remove_filter.clicked.connect(self._remove_selected_filter)
+        self.btn_remove_filter.setMinimumWidth(140)
+        fl_btn_layout.addWidget(self.btn_remove_filter)
+
+        self.btn_clear_filters = QPushButton("🧹 Limpar filtros")
+        self.btn_clear_filters.clicked.connect(self._clear_param_filters)
+        self.btn_clear_filters.setMinimumWidth(120)
+        fl_btn_layout.addWidget(self.btn_clear_filters)
+
+        # botão editar filtro
+        self.btn_edit_filter = QPushButton("✏️ Editar filtro")
+        self.btn_edit_filter.clicked.connect(self._edit_selected_filter)
+        self.btn_edit_filter.setMinimumWidth(120)
+        fl_btn_layout.addWidget(self.btn_edit_filter)
+
+        # botão desfazer (restaura where_input anterior à sincronização)
+        self.btn_undo_where = QPushButton("↶ Desfazer WHERE")
+        self.btn_undo_where.setEnabled(False)
+        self.btn_undo_where.clicked.connect(self._undo_last_where)
+        self.btn_undo_where.setMinimumWidth(120)
+        fl_btn_layout.addWidget(self.btn_undo_where)
+        # redo button
+        self.btn_redo_where = QPushButton("↷ Refazer WHERE")
+        self.btn_redo_where.setEnabled(False)
+        self.btn_redo_where.clicked.connect(self._redo_last_where)
+        self.btn_redo_where.setMinimumWidth(120)
+        fl_btn_layout.addWidget(self.btn_redo_where)
+
+        manage_layout.addLayout(fl_btn_layout)
+
+        # WHERE input (mover para dentro do grupo Gerenciar filtros para evitar duplicação)
         self.where_input = QTextEdit()
         self.where_input.setPlaceholderText("Ex: DataVenda >= '2024-01-01'")
         self.where_input.setMaximumHeight(100)
-        right_layout.addWidget(self.where_input)
+        manage_layout.addWidget(self.where_input)
+
+        manage_box.setLayout(manage_layout)
+        right_layout.addWidget(manage_box)
 
         # SQL Gerada
         right_layout.addWidget(QLabel("<b>🧠 Consulta criada automaticamente</b>"))
@@ -479,47 +743,125 @@ class QueryBuilderTab(QWidget):
 
         btn_generate = QPushButton("🧩 Gerar consulta")
         btn_generate.clicked.connect(self.generate_sql)
+        btn_generate.setMinimumWidth(140)
+        btn_generate.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_generate)
 
         btn_execute = QPushButton("▶️ Executar consulta")
         btn_execute.clicked.connect(self.execute_query)
         btn_execute.setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
+        btn_execute.setMinimumWidth(140)
+        btn_execute.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_execute)
 
         btn_save = QPushButton("💾 Salvar consulta")
         btn_save.clicked.connect(self.save_query)
+        btn_save.setMinimumWidth(140)
+        btn_save.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_save)
 
         btn_load = QPushButton("📂 Carregar consulta")
         btn_load.clicked.connect(self.load_query)
+        btn_load.setMinimumWidth(140)
+        btn_load.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_load)
 
         btn_delete = QPushButton("🗑️ Excluir consulta")
         btn_delete.clicked.connect(self.delete_query)
+        btn_delete.setMinimumWidth(140)
+        btn_delete.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_delete)
 
         btn_manage = QPushButton("🔧 Gerenciar consultas")
         # Abrir o gerenciador de consultas da janela principal (MainWindow)
         btn_manage.clicked.connect(lambda: (self.window().open_manage_queries() if hasattr(self.window(), 'open_manage_queries') else None))
+        btn_manage.setMinimumWidth(140)
+        btn_manage.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_manage)
-        
-        right_layout.addLayout(action_layout)
+
+        # NOTE: Instead of embedding action_layout inside right_panel, we'll create
+        # um painel de ações à direita do formulário (quarto painel no splitter)
+        # para manter os botões sempre alinhados verticalmente à direita.
+        # Mantemos right_panel sem os botões.
         right_layout.addStretch()
-        
         right_panel.setLayout(right_layout)
         
         # === SPLITTER PARA REDIMENSIONAMENTO ===
+        # painel de ações (botões verticais à direita)
+        actions_panel = QWidget()
+        actions_layout = QVBoxLayout()
+        actions_layout.setContentsMargins(6,6,6,6)
+        # transferir os botões criados acima para este layout (eles já existem)
+        try:
+            actions_layout.addWidget(btn_generate)
+            actions_layout.addWidget(btn_execute)
+            actions_layout.addWidget(btn_save)
+            actions_layout.addWidget(btn_load)
+            actions_layout.addWidget(btn_delete)
+            actions_layout.addWidget(btn_manage)
+        except Exception:
+            pass
+        # Ajustes visuais: largura/altura consistentes para formar botões retangulares
+        try:
+            for b in (btn_generate, btn_execute, btn_save, btn_load, btn_delete, btn_manage):
+                try:
+                    b.setMinimumWidth(150)
+                    b.setFixedHeight(36)
+                    b.setStyleSheet("border-radius:4px; text-align:left; padding-left:8px;")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # estilo simples: largura fixa para manter forma retangular
+        # largura configurável pelo usuário (persistida em user_prefs.json)
+        actions_panel.setLayout(actions_layout)
+        try:
+            pref_w = int(self._load_user_pref('actions_panel_width', 180))
+        except Exception:
+            pref_w = 180
+        actions_panel.setFixedWidth(pref_w)
+
+        # spinbox para ajustar largura dinamicamente
+        try:
+            width_ctrl_layout = QHBoxLayout()
+            width_ctrl_layout.setContentsMargins(0,0,0,6)
+            lbl_w = QLabel('Largura painel:')
+            spin_w = QSpinBox()
+            spin_w.setRange(100, 600)
+            spin_w.setValue(pref_w)
+            spin_w.setSingleStep(10)
+            def _on_width_changed(v):
+                try:
+                    actions_panel.setFixedWidth(v)
+                    self._save_user_pref('actions_panel_width', int(v))
+                except Exception:
+                    pass
+            spin_w.valueChanged.connect(_on_width_changed)
+            width_ctrl_layout.addWidget(lbl_w)
+            width_ctrl_layout.addWidget(spin_w)
+            # inserir no topo do actions_layout
+            actions_layout.insertLayout(0, width_ctrl_layout)
+        except Exception:
+            pass
+
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_panel)
         splitter.addWidget(center_panel)
         splitter.addWidget(right_panel)
+        splitter.addWidget(actions_panel)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         splitter.setStretchFactor(2, 2)
+        splitter.setStretchFactor(3, 0)
         
         layout.addWidget(splitter)
         self.setLayout(layout)
-        
+        # Por padrão, definir modo 'metadados' (bloqueia controles manuais)
+        try:
+            self.set_query_mode('metadados')
+        except Exception:
+            pass
+
         # Carrega tabelas
         # carrega mapeamento de nomes amigáveis (se não foi carregado antes)
         if not getattr(self, '_table_name_map', None):
@@ -578,6 +920,34 @@ class QueryBuilderTab(QWidget):
         except Exception as e:
             print(f"Falha ao carregar mapeamento de nomes amigáveis: {e}")
         return {}
+
+    def _load_user_pref(self, key: str, default=None):
+        """Carrega preferência simples do arquivo user_prefs.json ao lado do script."""
+        try:
+            p = os.path.join(os.path.dirname(__file__), 'user_prefs.json')
+            if os.path.exists(p):
+                with open(p, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get(key, default)
+        except Exception:
+            pass
+        return default
+
+    def _save_user_pref(self, key: str, value):
+        try:
+            p = os.path.join(os.path.dirname(__file__), 'user_prefs.json')
+            data = {}
+            if os.path.exists(p):
+                try:
+                    with open(p, 'r', encoding='utf-8') as f:
+                        data = json.load(f) or {}
+                except Exception:
+                    data = {}
+            data[key] = value
+            with open(p, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     def _save_table_name_mapping(self):
         """Persiste o mapeamento de nomes amigáveis em arquivo JSON."""
@@ -692,6 +1062,12 @@ class QueryBuilderTab(QWidget):
         self.columns_list.clear()
         self.sql_preview.clear()
         self.where_input.clear()
+        # limpa filtros param
+        self._param_filters = []
+        try:
+            self._refresh_filters_list()
+        except Exception:
+            pass
     
     def update_available_columns(self):
         """Atualiza lista de colunas disponíveis baseado nas tabelas selecionadas"""
@@ -757,6 +1133,40 @@ class QueryBuilderTab(QWidget):
             parts = t.split('.')
             schema = parts[0].strip('[]')
             table_name = parts[1].split('(')[0].strip()
+            aliases[(schema, table_name)] = maker(table_name)
+
+        return aliases
+
+    def _make_aliases_for_tables(self, tables: list) -> dict:
+        """Gera um mapa (schema,table) -> alias para uma lista de tuplas (schema,table).
+
+        Reutiliza a mesma heurística usada por `_compute_aliases_for_selected_tables`.
+        """
+        aliases = {}
+        used_aliases = {}
+
+        def make_alias_short(table_name: str) -> str:
+            base = ''.join([c for c in table_name if c.isalnum()])[:3].lower() or 't'
+            if base not in used_aliases:
+                used_aliases[base] = 1
+                return base
+            else:
+                used_aliases[base] += 1
+                return f"{base}{used_aliases[base]}"
+
+        def make_alias_desc(table_name: str) -> str:
+            base = ''.join([c for c in table_name if c.isalnum()]).lower()[:30] or 't'
+            if base not in used_aliases:
+                used_aliases[base] = 1
+                return base
+            else:
+                used_aliases[base] += 1
+                return f"{base}{used_aliases[base]}"
+
+        style = self.alias_style_combo.currentText() if hasattr(self, 'alias_style_combo') else 'Curto (apg,cli)'
+        maker = make_alias_short if style.lower().startswith('curto') else make_alias_desc
+
+        for schema, table_name in tables:
             aliases[(schema, table_name)] = maker(table_name)
 
         return aliases
@@ -934,7 +1344,7 @@ class QueryBuilderTab(QWidget):
         ]
         for f in fmts:
             try:
-                dt = datetime.datetime.strptime(v, f)
+                dt = _dt.datetime.strptime(v, f)
                 return f"{dt.month}-{dt.day}-{dt.year}"
             except Exception:
                 continue
@@ -943,7 +1353,7 @@ class QueryBuilderTab(QWidget):
             vv = v
             if vv.endswith('Z') or vv.endswith('z'):
                 vv = vv[:-1] + '+00:00'
-            dt = datetime.datetime.fromisoformat(vv)
+            dt = _dt.datetime.fromisoformat(vv)
             return f"{dt.month}-{dt.day}-{dt.year}"
         except Exception:
             pass
@@ -966,6 +1376,61 @@ class QueryBuilderTab(QWidget):
                 except Exception:
                     continue
         raise ValueError(f"Formato de data inválido: {value}")
+
+    def _date_to_iso(self, value: str) -> str:
+        """Tenta converter uma string de data para 'YYYY-MM-DD' (ISO date) para uso em parâmetros."""
+        v = (value or '').strip()
+        if not v:
+            return v
+        # try dateutil first
+        try:
+            from dateutil import parser as dateparser
+            dt = dateparser.parse(v)
+            return dt.date().isoformat()
+        except Exception:
+            pass
+
+        # try fromisoformat variants
+        try:
+            vv = v
+            if vv.endswith('Z') or vv.endswith('z'):
+                vv = vv[:-1] + '+00:00'
+            dt = _dt.datetime.fromisoformat(vv)
+            return dt.date().isoformat()
+        except Exception:
+            pass
+
+        # fallback to heuristic parsing used in normalize_date but return ISO
+        fmts = [
+            '%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%m/%d/%Y', '%m-%d-%Y',
+            '%d.%m.%Y', '%Y/%m/%d', '%Y.%m.%d',
+            '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M',
+        ]
+        for f in fmts:
+            try:
+                dt = _dt.datetime.strptime(v, f)
+                return dt.date().isoformat()
+            except Exception:
+                continue
+
+        # last resort: try splitting
+        for sep in ('-', '/', '.'):
+            parts = v.split(sep)
+            if len(parts) == 3:
+                try:
+                    p0 = int(parts[0]); p1 = int(parts[1]); p2 = int(parts[2])
+                    if p0 > 31:
+                        year = p0; month = p1; day = p2
+                    elif p2 > 31:
+                        year = p2; month = p0; day = p1
+                    else:
+                        month = p0; day = p1; year = p2
+                    return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+                except Exception:
+                    continue
+
+        # give up, return original
+        return v
 
     def select_all_columns(self):
         try:
@@ -1193,6 +1658,15 @@ class QueryBuilderTab(QWidget):
                         return str(f)
                     except Exception:
                         return s
+                # secondary numeric formatter used elsewhere (defined once to avoid nested def issues)
+                def format_number_str2(s: str) -> str:
+                    try:
+                        f = float(s)
+                        if f.is_integer():
+                            return str(int(f))
+                        return str(f)
+                    except Exception:
+                        return s
                 if op == "IS NULL":
                     p = f"{field_ref} IS NULL"
                 elif op == "IN":
@@ -1280,14 +1754,6 @@ class QueryBuilderTab(QWidget):
                     else:
                         # numbers: format to remove trailing .0 when integer
                         if needs_number:
-                            def format_number_str2(s: str) -> str:
-                                try:
-                                    f = float(s)
-                                    if f.is_integer():
-                                        return str(int(f))
-                                    return str(f)
-                                except Exception:
-                                    return s
                             parts = [format_number_str2(p) for p in parts]
                         # else left as-is
                     expr = f"{field_ref} IN ({', '.join(parts)})"
@@ -1296,14 +1762,6 @@ class QueryBuilderTab(QWidget):
                         a = f"'{self.normalize_date(v1)}'"
                         b = f"'{self.normalize_date(v2)}'"
                     elif needs_number:
-                        def format_number_str2(s: str) -> str:
-                            try:
-                                f = float(s)
-                                if f.is_integer():
-                                    return str(int(f))
-                                return str(f)
-                            except Exception:
-                                return s
                         a = format_number_str2(v1)
                         b = format_number_str2(v2)
                     elif needs_text:
@@ -1315,14 +1773,6 @@ class QueryBuilderTab(QWidget):
                     if needs_date:
                         v = f"'{self.normalize_date(v1)}'"
                     elif needs_number:
-                        def format_number_str2(s: str) -> str:
-                            try:
-                                f = float(s)
-                                if f.is_integer():
-                                    return str(int(f))
-                                return str(f)
-                            except Exception:
-                                return s
                         v = format_number_str2(v1)
                     elif needs_text:
                         v = f"'{v1}'"
@@ -1477,125 +1927,2028 @@ class QueryBuilderTab(QWidget):
             )
     
     def generate_sql(self):
-        """Gera a SQL baseada na seleção"""
+        """Dispatcher: gera SQL conforme o modo selecionado.
+
+        Comportamento:
+        - Se `self.modo_consulta == 'metadados'` (padrão), delega para
+          `generate_sql_metadados()` que usa o QueryBuilder.
+        - Se `self.modo_consulta == 'manual'`, delega para
+          `generate_sql_manual()` que monta a SQL a partir das tabelas/colunas
+          selecionadas na aba (fluxo manual).
+
+        Importante: não misturar os dois fluxos na mesma função.
+        """
+        modo = getattr(self, 'modo_consulta', 'metadados')
+        if modo == 'manual':
+            return self.generate_sql_manual()
+        else:
+            return self.generate_sql_metadados()
+
+    def generate_sql_metadados(self):
+        """Gera a SQL baseada nos metadados (JSON) usando QueryBuilder."""
         try:
-            # Valida seleção
-            if self.selected_tables_list.count() == 0:
-                QMessageBox.warning(self, "Aviso", "Selecione ao menos uma tabela")
+            # Valida módulo
+            if not getattr(self, "current_modulo", None):
+                QMessageBox.warning(self, "Aviso", "Selecione um módulo")
                 return
-            
-            if self.selected_columns_list.count() == 0:
-                QMessageBox.warning(self, "Aviso", "Selecione ao menos uma coluna")
+
+            # Valida agrupamento
+            if not getattr(self, "current_agrupamento_id", None):
+                QMessageBox.warning(self, "Aviso", "Selecione um agrupamento")
                 return
-            
-            # Extrai tabelas
-            tables = []
-            for i in range(self.selected_tables_list.count()):
-                table_text = self._get_selected_table_raw_text(self.selected_tables_list.item(i))
-                parts = table_text.split('.')
-                schema = parts[0].strip('[]')
-                table_name = parts[1].split('(')[0].strip()
-                tables.append((schema, table_name))
-            
-            # Extrai colunas
-            columns = []
-            for i in range(self.selected_columns_list.count()):
-                col_text = self.selected_columns_list.item(i).text()
-                # Parse: table.column (type)
-                table_col = col_text.split('(')[0].strip()
-                table_name, col_name = table_col.split('.')
-                # Assume schema dbo por padrão
-                columns.append(('dbo', table_name.strip(), col_name.strip()))
-            
-            # Tipo de JOIN
-            join_type_text = self.join_type_combo.currentText()
-            if "INNER" in join_type_text:
-                join_type = JoinType.INNER
-            elif "LEFT" in join_type_text:
-                join_type = JoinType.LEFT
+
+            # WHERE clause (opcional)
+            # Preferir filtros parametrizados adicionados via UI
+            filtros = None
+            where_clause = ''
+            if getattr(self, '_param_filters', None):
+                # normalize to tuples (expr, params) because we may store meta as third element
+                filtros = []
+                for f in list(self._param_filters):
+                    if isinstance(f, (list, tuple)):
+                        # take only expr and params if present
+                        if len(f) >= 2:
+                            filtros.append((f[0], f[1]))
+                        elif len(f) == 1:
+                            filtros.append((f[0], []))
+                    else:
+                        filtros.append(str(f))
             else:
-                join_type = JoinType.RIGHT
-            
-            # WHERE clause (somente passar se houver filtros)
-            where_clause = self.where_input.toPlainText().strip()
-            if not where_clause:
-                where_clause = None
+                where_clause = self.where_input.toPlainText().strip()
+                if where_clause:
+                    filtros = [where_clause]
 
-            # Determina modo de alias
-            if not getattr(self, 'use_alias_cb', None) or not self.use_alias_cb.isChecked():
-                alias_mode = 'none'
-            else:
-                idx = self.alias_style_combo.currentIndex() if getattr(self, 'alias_style_combo', None) else 0
-                if idx == 0:
-                    alias_mode = 'short'
-                else:
-                    alias_mode = 'descriptive' if idx == 1 else 'none'
+            # Gera SQL via QueryBuilder (metadados) — usa o QueryBuilder já injetado na aba
+            qb = self.qb
 
-            # Antes de gerar a SQL, normalize referências no WHERE:
-            # - Se o WHERE usar aliases gerados anteriormente (ou diferentes estilos), substitui por forma totalmente qualificada
-            #   [schema].[table].[col] para que o QueryBuilder possa aplicar os aliases atuais.
-            # - Também converte ocorrências do tipo Table.Column (sem schema) para [schema].[table].[col].
-            wc = where_clause
-            if wc:
-                try:
-                    import re
-                    # para cada tabela selecionada, tente detectar e substituir alias ou table.col
-                    for (schema, table_name) in tables:
-                        # aliases possíveis (mesma heurística que usamos para criar aliases)
-                        def make_alias_short_local(name: str) -> str:
-                            base = ''.join([c for c in name if c.isalnum()])[:3].lower() or 't'
-                            return base
-                        def make_alias_desc_local(name: str) -> str:
-                            base = ''.join([c for c in name if c.isalnum()]).lower()[:30] or 't'
-                            return base
-
-                        short_alias = make_alias_short_local(table_name)
-                        desc_alias = make_alias_desc_local(table_name)
-
-                        # substitui alias.[col] ou alias.col  -> [schema].[table].[col]
-                        for a in (short_alias, desc_alias):
-                            # pattern cobre [alias].[col], alias.[col], alias.col, alias.[col name with spaces]
-                            pat = re.compile(rf"\b{re.escape(a)}\.(?:\[([^\]]+)\]|([A-Za-z0-9_]+))")
-                            def repl(m):
-                                col = m.group(1) or m.group(2)
-                                return f"[{schema}].[{table_name}].[{col}]"
-                            wc = pat.sub(repl, wc)
-
-                        # substituir Table.Col (sem schema) também
-                        pat2 = re.compile(rf"\b{re.escape(table_name)}\.(?:\[([^\]]+)\]|([A-Za-z0-9_]+))")
-                        def repl2(m):
-                            col = m.group(1) or m.group(2)
-                            return f"[{schema}].[{table_name}].[{col}]"
-                        wc = pat2.sub(repl2, wc)
-                except Exception:
-                    # se falhar na normalização, continue com where original
-                    wc = where_clause
-
-            # Gera SQL
-            # safety: remove accidental leading connectors (AND/OR) to avoid 'WHERE AND ...'
+            # tenta construir aliases para as tabelas referenciadas no agrupamento
+            aliases = {}
             try:
-                import re
-                if wc:
-                    wc = re.sub(r"^\s*(and|or)\b\s*", "", wc, flags=re.IGNORECASE)
+                agrup_meta = self.qb.carregar_agrupamentos(self.current_modulo)
+                agrup = next((a for a in agrup_meta.get('agrupamentos', []) if a.get('id') == self.current_agrupamento_id), None)
+                tables = []
+                if agrup:
+                    # principal
+                    t0 = agrup.get('tabela')
+                    if t0:
+                        tables.append(t0)
+                    # joins
+                    for j in agrup.get('joins', []):
+                        jt = j.get('tabela')
+                        if jt:
+                            tables.append(jt)
+                # parse tables into (schema, table)
+                parsed = []
+                for t in tables:
+                    try:
+                        parts = re.split(r"\.|\[|\]", t)
+                        parts = [p for p in parts if p]
+                        if len(parts) == 1:
+                            parsed.append(('dbo', parts[0]))
+                        elif len(parts) == 2:
+                            parsed.append((parts[0], parts[1]))
+                        else:
+                            parsed.append((parts[-2], parts[-1]))
+                    except Exception:
+                        continue
+                # build alias map
+                aliases = self._make_aliases_for_tables(parsed)
+            except Exception:
+                aliases = {}
+
+            # --- Auto-qualify simple column references in textual WHERE clauses ---
+            def _replace_unquoted(s: str, pattern, repl):
+                """Substitui ocorrências de pattern por repl fora de literais entre aspas simples.
+                pattern deve ser um compiled regex."""
+                out = []
+                i = 0
+                L = len(s)
+                while i < L:
+                    if s[i] == "'":
+                        # copy quoted literal as-is, handle doubled single-quote escape
+                        j = i + 1
+                        while j < L:
+                            if s[j] == "'":
+                                if j+1 < L and s[j+1] == "'":
+                                    # escaped quote, skip both
+                                    j += 2
+                                    continue
+                                else:
+                                    j += 1
+                                    break
+                            j += 1
+                        out.append(s[i:j])
+                        i = j
+                    else:
+                        # find next quote or end
+                        j = s.find("'", i)
+                        segment = s[i:j] if j != -1 else s[i:]
+                        # apply replacement on this segment
+                        segment = pattern.sub(repl, segment)
+                        out.append(segment)
+                        if j == -1:
+                            break
+                        i = j
+                return ''.join(out)
+
+            def _qualify_where_text(text: str, main_alias: Optional[str], columns: List[str]) -> str:
+                """Qualifica ocorrências simples de nomes de coluna em `text` usando `main_alias`.
+                Não altera referências já qualificadas (contendo '.') e preserva literais.
+                """
+                if not text or not main_alias or not columns:
+                    return text
+                # compile a regex that matches any of the column names as whole words
+                # but not when preceded by a dot (i.e., already qualified)
+                cols_sorted = sorted(columns, key=lambda x: -len(x))
+                # escape for regex
+                pat = r"\b(" + '|'.join(re.escape(c) for c in cols_sorted) + r")\b"
+                compiled = re.compile(pat, re.IGNORECASE)
+
+                def repl(m):
+                    start = m.start()
+                    # check previous char in the segment (we are in a segment without quotes)
+                    # if previous char is '.' then skip replacement (already qualified)
+                    # can't access absolute position here easily, so rely on lookbehind: ensure not preceded by '.'
+                    # use a simple check on the match string
+                    return f"{main_alias}.{m.group(1)}"
+
+                # use _replace_unquoted to avoid changing literals
+                return _replace_unquoted(text, compiled, repl)
+
+            # if we have a textual where_clause (not parametrized) try to qualify
+            try:
+                # get main table and alias
+                main_table = None
+                if agrup:
+                    main_table = agrup.get('tabela')
+                main_alias = None
+                if main_table:
+                    parts = re.split(r"\.|\[|\]", main_table)
+                    parts = [p for p in parts if p]
+                    if len(parts) == 1:
+                        main_schema, main_tbl = 'dbo', parts[0]
+                    elif len(parts) == 2:
+                        main_schema, main_tbl = parts[0], parts[1]
+                    else:
+                        main_schema, main_tbl = parts[-2], parts[-1]
+                    if aliases and (main_schema, main_tbl) in aliases:
+                        main_alias = aliases[(main_schema, main_tbl)]
+
+                # collect candidate column names from agrupamento (dimensoes + metricas)
+                candidate_cols = []
+                if agrup:
+                    for d in agrup.get('dimensoes', []):
+                        if isinstance(d, dict):
+                            fld = d.get('campo')
+                        else:
+                            fld = d
+                        if isinstance(fld, str) and fld:
+                            # strip possible qualification
+                            candidate_cols.append(fld.split('.')[-1].strip('[]'))
+                    for m in agrup.get('metricas', []):
+                        fld = m.get('campo') if isinstance(m, dict) else m
+                        if isinstance(fld, str) and fld:
+                            candidate_cols.append(fld.split('.')[-1].strip('[]'))
+
+                # apply qualification to where_clause and to filtros entries that are plain strings
+                if where_clause:
+                    new_where = _qualify_where_text(where_clause, main_alias, candidate_cols)
+                    if new_where != where_clause:
+                        where_clause = new_where
+                        filtros = [where_clause]
+                if filtros and isinstance(filtros, list):
+                    new_filters = []
+                    modified = False
+                    for it in filtros:
+                        if isinstance(it, str):
+                            new = _qualify_where_text(it, main_alias, candidate_cols)
+                            new_filters.append(new)
+                            if new != it:
+                                modified = True
+                        else:
+                            new_filters.append(it)
+                    if modified:
+                        filtros = new_filters
+            except Exception:
+                # não bloquear geração por falha nesta heurística
+                pass
+
+            # --------------------------------------------------
+            # Regra de segurança: se o agrupamento contém campos de
+            # data sensíveis, exigir que o usuário forneça um filtro
+            # para pelo menos um desses campos antes de gerar a SQL.
+            # --------------------------------------------------
+            try:
+                # lista de identificadores de campos de data (normalizados)
+                date_fields = [
+                    'dataemissao','dataentrada','datasaida','datamovimento','datavenda',
+                    'datavencimento','dataprevista','dataabertura','databaixa','datacompensacao',
+                    'datacompetencia','datacompra','datafaturamento','datalancamento','datapagamento',
+                    'datapedido','dataprevisao','datarecebimento'
+                ]
+
+                def _norm(s: str) -> str:
+                    if not s:
+                        return ''
+                    return re.sub(r"[^0-9a-z]", "", str(s).lower())
+
+                # coleta campos presentes no agrupamento (dimensoes e metricas)
+                agrup = agrup if 'agrup' in locals() and agrup is not None else None
+                if agrup is None:
+                    agrup = None
+                agrup_fields = []
+                if agrup:
+                    for d in agrup.get('dimensoes', []):
+                        if isinstance(d, dict):
+                            campo = d.get('campo')
+                        else:
+                            campo = d
+                        if campo:
+                            agrup_fields.append(str(campo))
+                    for m in agrup.get('metricas', []):
+                        campo = m.get('campo')
+                        if campo:
+                            agrup_fields.append(str(campo))
+
+                # normaliza e identifica quais campos de data estão presentes
+                agrup_norm = { _norm(f): f for f in agrup_fields }
+                present_date_keys = [k for k in date_fields if k in agrup_norm]
+
+                if present_date_keys:
+                    # construir lista de expressões de filtro atualmente definidas
+                    exprs = []
+                    if filtros:
+                        for f in filtros:
+                            if isinstance(f, (list, tuple)) and len(f) >= 1:
+                                exprs.append(str(f[0]))
+                            else:
+                                exprs.append(str(f))
+                    wc = where_clause or ''
+                    if wc:
+                        exprs.append(wc)
+
+                    # verificar se ao menos um dos campos de data possui filtro
+                    ok = False
+                    missing_friendly = []
+                    # para detectar mesmo quando existe alias/table qualifier, usamos regex
+                    for key in present_date_keys:
+                        original_field = agrup_norm.get(key, key)
+                        try:
+                            pat = re.compile(r"\b" + re.escape(original_field) + r"\b", re.IGNORECASE)
+                        except Exception:
+                            pat = None
+
+                        found = False
+                        if pat:
+                            for e in exprs:
+                                try:
+                                    if pat.search(e):
+                                        found = True
+                                        break
+                                except Exception:
+                                    continue
+
+                        if found:
+                            ok = True
+                            break
+                        else:
+                            # coletar nome amigável para mensagem
+                            friendly = None
+                            try:
+                                friendly = get_field_label(self.current_modulo, original_field)
+                            except Exception:
+                                friendly = None
+                            if not friendly:
+                                try:
+                                    friendly = self._prettify_field_label(original_field)
+                                except Exception:
+                                    friendly = original_field
+                            missing_friendly.append(friendly)
+
+                    if not ok:
+                        # mensagem para o usuário (lista amigável única)
+                        missing_list = ', '.join(sorted(set(missing_friendly)))
+                        QMessageBox.warning(
+                            self,
+                            'Filtro de data necessário',
+                            f"Este agrupamento contém campos de data ({missing_list}).\n" +
+                            "Para gerar a consulta você deve informar um filtro para a(s) data(s) referente(s) ao módulo selecionado."
+                        )
+                        return
+            except Exception:
+                # em caso de erro na verificação, não bloquear a geração — apenas registrar em debug
+                try:
+                    if getattr(self, '_debug_filter_populate', False):
+                        print('[DEBUG] Falha ao verificar filtros de data obrigatórios')
+                except Exception:
+                    pass
+
+            sql, sql_params = qb.gerar_sql_por_agrupamento(
+                modulo=self.current_modulo,
+                agrupamento_id=self.current_agrupamento_id,
+                filtros=filtros,
+                aliases=aliases
+            )
+
+            # Preview do SQL
+            preview = sql
+            # Se houver parâmetros, substituir '?' por valores legíveis no preview
+            try:
+                if sql_params:
+                    psql = preview
+                    for p in sql_params:
+                        # formatar valor para SQL literal no preview
+                        if p is None:
+                            sval = 'NULL'
+                        elif isinstance(p, (_dt.date, _dt.datetime)):
+                            try:
+                                sval = f"'{p.strftime('%m-%d-%Y')}'"
+                            except Exception:
+                                sval = f"'{str(p)}'"
+                        elif isinstance(p, str):
+                            # tenta interpretar como ISO date e reformatar para MM-DD-YYYY
+                            try:
+                                dt = _dt.datetime.fromisoformat(p)
+                                sval = f"'{dt.strftime('%m-%d-%Y')}'"
+                            except Exception:
+                                m = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', p)
+                                if m:
+                                    sval = f"'{m.group(2)}-{m.group(3)}-{m.group(1)}'"
+                                else:
+                                    sval = f"'{p}'"
+                        else:
+                            sval = str(p)
+                        psql = psql.replace('?', sval, 1)
+                    preview = psql
             except Exception:
                 pass
 
-            sql = self.qb.build_query(tables, columns, None, wc, alias_mode=alias_mode)
-            # Se não houver filtros, exibe comentário informativo APÓS a consulta no preview
-            if not where_clause:
-                preview = sql + "\n-- Sem filtros aplicados"
-            else:
-                preview = sql
+            # se não houver filtros (nem parametrizados nem expressão na textbox), indicar
+            if not filtros:
+                preview += "\n-- Sem filtros aplicados"
+
             self.sql_preview.setPlainText(preview)
+
+            # Guarda SQL atual para execução posterior
+            self.current_sql = sql
+            self.current_sql_params = sql_params
+
+            # Log de sessão (se existir)
             try:
                 if getattr(self, 'session_logger', None):
-                    self.session_logger.log('generate_sql', 'Gerou preview de SQL', {'preview': preview[:200]})
+                    self.session_logger.log(
+                        'generate_sql',
+                        'Gerou preview de SQL (metadados)',
+                        {
+                            'modulo': self.current_modulo,
+                            'agrupamento': self.current_agrupamento_id,
+                            'preview': (sql[:200] if isinstance(sql, str) else str(sql)[:200])
+                        }
+                    )
             except Exception:
                 pass
-            
+
         except Exception as e:
-            QMessageBox.critical(self, "Erro", f"Erro ao gerar SQL:\n{str(e)}")
-    
+            QMessageBox.critical(
+                self,
+                "Erro ao gerar SQL",
+                f"Erro ao gerar SQL:\n{str(e)}"
+            )
+
+    def generate_sql_manual(self):
+        """Gera a SQL no modo manual a partir das tabelas/colunas selecionadas.
+
+        Esta função monta uma SQL simples. Para fluxos mais avançados (joins
+        automáticos, aliases, etc.) expanda conforme necessidade.
+        """
+        try:
+            # Coleta colunas selecionadas
+            cols = [self.selected_columns_list.item(i).text() for i in range(self.selected_columns_list.count())]
+            if not cols:
+                select_clause = '*'
+            else:
+                # Se o usuário escolheu colunas no formato 'table.col (type)', tenta extrair apenas 'table.col'
+                cleaned = []
+                for c in cols:
+                    m = re.match(r"^([^\(]+)\s*(?:\(.*\))?$", c)
+                    cleaned.append(m.group(1).strip() if m else c)
+                select_clause = ', '.join(cleaned)
+
+            # Coleta tabelas
+            tables = [self._get_selected_table_raw_text(self.selected_tables_list.item(i)) for i in range(self.selected_tables_list.count())]
+            if not tables:
+                QMessageBox.warning(self, "Aviso", "Selecione ao menos uma fonte (tabela) para o modo manual")
+                return
+
+            from_clause = ', '.join(tables)
+
+            # Where (opcional)
+            where_clause = self.where_input.toPlainText().strip()
+            sql = f"SELECT {select_clause} FROM {from_clause}"
+            if where_clause:
+                sql += f" WHERE {where_clause}"
+
+            # Preview
+            self.sql_preview.setPlainText(sql)
+            self.current_sql = sql
+
+            # Log
+            try:
+                if getattr(self, 'session_logger', None):
+                    self.session_logger.log('generate_sql', 'Gerou preview de SQL (manual)', {'preview': sql[:200]})
+            except Exception:
+                pass
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro ao gerar SQL (manual)", f"{e}")
+        
+    def on_modulo_changed(self, index: int):
+        """Handler para quando o usuário muda o módulo na UI.
+
+        Espera-se que exista um QComboBox `self.combo_modulo` conectado a este
+        handler. O método armazena o value associado via `itemData(index)` em
+        `self.current_modulo`.
+        """
+        try:
+            if hasattr(self, 'combo_modulo') and self.combo_modulo is not None:
+                self.current_modulo = self.combo_modulo.itemData(index)
+            else:
+                # fallback: tenta ler item text se itemData não estiver disponível
+                if hasattr(self, 'combo_modulo') and self.combo_modulo is not None:
+                    self.current_modulo = self.combo_modulo.itemText(index)
+        except Exception:
+            # não interrompe a UI
+            self.current_modulo = None
+
+    def _on_modulo_selected(self, index: int):
+        """Internal handler: atualiza atributo e popula agrupamentos para o módulo selecionado."""
+        try:
+            # atualiza atributo público
+            self.on_modulo_changed(index)
+            module = getattr(self, 'current_modulo', None)
+            if not module:
+                return
+            # carrega agrupamentos via QueryBuilder
+            try:
+                if getattr(self, '_debug_filter_populate', False):
+                    try:
+                        print(f"[DEBUG] _on_modulo_selected: module={module} index={index}")
+                    except Exception:
+                        pass
+                agrup_meta = self.qb.carregar_agrupamentos(module)
+                self.combo_agrupamento.clear()
+                # populate with a neutral placeholder and keep signals blocked so
+                # user must actively choose an agrupamento
+                try:
+                    self.combo_agrupamento.blockSignals(True)
+                    self.combo_agrupamento.addItem("-- Selecione agrupamento --", None)
+                    for a in agrup_meta.get('agrupamentos', []):
+                        label = a.get('label') or a.get('id')
+                        self.combo_agrupamento.addItem(label, a.get('id'))
+                    # keep placeholder selected; do not auto-select the first real agrupamento
+                    self.combo_agrupamento.setCurrentIndex(0)
+                finally:
+                    try:
+                        self.combo_agrupamento.blockSignals(False)
+                    except Exception:
+                        pass
+                # guarda agrupamento atual para uso posterior (população de campos ao selecionar)
+                self._current_agrup_meta = agrup_meta
+                # se já houver um agrupamento selecionado (por exemplo, reconstrução de estado), povoar campos
+                try:
+                    cur_idx = self.combo_agrupamento.currentIndex()
+                    cur_id = self.combo_agrupamento.itemData(cur_idx)
+                    if cur_id:
+                        # populate fields translated according to mapping
+                        self._populate_filter_fields(self._current_agrup_meta, cur_id)
+                except Exception:
+                    pass
+            except Exception:
+                # se falhar ao carregar agrupamentos, limpa combo
+                try:
+                    self.combo_agrupamento.clear()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def show_query_mode_help(self):
+        """Exibe um diálogo explicando os dois modos de consulta."""
+        try:
+            msg = (
+                "Modos de consulta:\n\n"
+                "Metadados:\n"
+                "  - Usa arquivos JSON de metadados para construir automaticamente a SQL\n"
+                "  - Recomendado quando o módulo/agrupamentos estão disponíveis\n\n"
+                "Manual:\n"
+                "  - Permite selecionar tabelas e colunas livremente e montar a SQL manualmente\n"
+                "  - Use quando você precisa de consultas ad-hoc que não estão cobertas pelos metadados\n\n"
+                "Dica: alterne entre modos com os botões de rádio acima. Em 'Metadados' os controles manuais são desabilitados\n"
+                "para evitar conflitos; em 'Manual' os combos de módulo/agrupamento ficam desabilitados."
+            )
+            QMessageBox.information(self, "Ajuda - Modos de Consulta", msg)
+        except Exception:
+            pass
+
+    def on_agrupamento_changed(self, index: int):
+        """Handler para quando o usuário muda o agrupamento na UI.
+
+        Espera-se que exista um QComboBox `self.combo_agrupamento` conectado a
+        este handler. Armazena o valor em `self.current_agrupamento_id`.
+        """
+        try:
+            if hasattr(self, 'combo_agrupamento') and self.combo_agrupamento is not None:
+                self.current_agrupamento_id = self.combo_agrupamento.itemData(index)
+            else:
+                if hasattr(self, 'combo_agrupamento') and self.combo_agrupamento is not None:
+                    self.current_agrupamento_id = self.combo_agrupamento.itemText(index)
+        except Exception:
+            self.current_agrupamento_id = None
+
+    def _on_agrupamento_selected(self, index: int):
+        """Internal handler: atualiza o atributo público do agrupamento a partir do combo."""
+        try:
+            self.on_agrupamento_changed(index)
+            # quando agrupamento muda, tentar popular campos de filtro com base no agrup_meta corrente
+            try:
+                if getattr(self, '_debug_filter_populate', False):
+                    try:
+                        print(f"[DEBUG] _on_agrupamento_selected: index={index} itemData={self.combo_agrupamento.itemData(index)}")
+                    except Exception:
+                        pass
+                if not getattr(self, '_current_agrup_meta', None):
+                    return
+                agrup_id = self.combo_agrupamento.itemData(index)
+                # only populate when a real agrupamento (non-placeholder) is selected
+                if agrup_id:
+                    self._populate_filter_fields(self._current_agrup_meta, agrup_id)
+                else:
+                    # clear filter fields if placeholder selected
+                    try:
+                        self.combo_filter_field.clear()
+                        self.combo_filter_field.addItem("-- selecione um agrupamento --")
+                        self.combo_filter_field.setEnabled(False)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _on_filter_field_changed(self, index: int):
+        """Atualiza quais widgets de entrada são exibidos conforme o tipo do campo selecionado."""
+        try:
+            data = self.combo_filter_field.itemData(index) or self.combo_filter_field.currentData()
+            ftype = (data.get('type') if isinstance(data, dict) else None) if data else None
+            if not ftype:
+                ftype = 'text'
+
+            # esconder tudo e mostrar apenas o que for necessário
+            try:
+                # texto
+                self.filter_value_input.setVisible(False)
+                # datas
+                self.filter_date1.setVisible(False)
+                self.filter_date2.setVisible(False)
+                # números
+                self.filter_num1.setVisible(False)
+                self.filter_num2.setVisible(False)
+            except Exception:
+                pass
+
+            if ftype == 'date':
+                # ajusta formato do QDateEdit conforme preferências do MainWindow
+                try:
+                    main = self.window()
+                    pyfmt = getattr(main, 'date_format', '%m-%d-%Y')
+                    qtfmt = self._python_dateformat_to_qt(pyfmt)
+                    self.filter_date1.setDisplayFormat(qtfmt)
+                    self.filter_date2.setDisplayFormat(qtfmt)
+                except Exception:
+                    pass
+                self.filter_date1.setVisible(True)
+                # se operador for BETWEEN mostrar segundo
+                if self.combo_filter_op.currentText() == 'BETWEEN':
+                    self.filter_date2.setVisible(True)
+                else:
+                    self.filter_date2.setVisible(False)
+            elif ftype == 'numeric':
+                self.filter_num1.setVisible(True)
+                if self.combo_filter_op.currentText() == 'BETWEEN':
+                    self.filter_num2.setVisible(True)
+                else:
+                    self.filter_num2.setVisible(False)
+            else:
+                # texto default
+                self.filter_value_input.setVisible(True)
+                self.filter_value_input_to.setVisible(self.combo_filter_op.currentText() == 'BETWEEN')
+        except Exception as e:
+            print(f"Erro ao atualizar widgets de filtro: {e}")
+
+    def _on_filter_op_changed(self, op: str):
+        """Atualiza visibilidade do segundo valor quando operador é BETWEEN"""
+        try:
+            current_field_data = self.combo_filter_field.currentData()
+            ftype = (current_field_data.get('type') if isinstance(current_field_data, dict) else None) if current_field_data else None
+            if not ftype:
+                ftype = 'text'
+
+            if op == 'BETWEEN':
+                if ftype == 'date':
+                    try:
+                        main = self.window()
+                        pyfmt = getattr(main, 'date_format', '%m-%d-%Y')
+                        qtfmt = self._python_dateformat_to_qt(pyfmt)
+                        self.filter_date2.setDisplayFormat(qtfmt)
+                    except Exception:
+                        pass
+                    self.filter_date2.setVisible(True)
+                elif ftype == 'numeric':
+                    self.filter_num2.setVisible(True)
+                else:
+                    self.filter_value_input_to.setVisible(True)
+            else:
+                # hide second inputs
+                try:
+                    self.filter_date2.setVisible(False)
+                    self.filter_num2.setVisible(False)
+                    self.filter_value_input_to.setVisible(False)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Erro ao atualizar operador de filtro: {e}")
+
+    def _qualify_field(self, meta: dict) -> str:
+        """Retorna a referência qualificada para uso em SQL a partir da meta do campo.
+
+        Se meta contém uma expressão (por exemplo FORMAT(...)) e não contém table/column,
+        retorna a expressão bruta. Se houver table/column/schema, tenta usar alias das
+        tabelas selecionadas; se não houver alias, retorna [schema].[table].[column].
+        """
+        try:
+            if not meta:
+                return ''
+            expr = meta.get('expr') or ''
+            col = meta.get('column_name')
+            table = meta.get('table_name')
+            schema = meta.get('schema') or 'dbo'
+
+            # if expr looks like a complex expression (contains '(' or whitespace), return as-is
+            if expr and ("(" in expr or ")" in expr or ' ' in expr) and (not col or not table):
+                return expr
+
+            if col and table:
+                # compute aliases for selected tables
+                try:
+                    aliases = self._compute_aliases_for_selected_tables()
+                    alias = aliases.get((schema, table))
+                except Exception:
+                    alias = None
+
+                if alias:
+                    return f"{alias}.[{col}]"
+                else:
+                    return f"[{schema}].[{table}].[{col}]"
+
+            # fallback: return expr or raw
+            return expr or meta.get('expr') or ''
+        except Exception:
+            return meta.get('expr') if isinstance(meta, dict) else str(meta)
+
+    def _python_dateformat_to_qt(self, pyfmt: str) -> str:
+        """Converte um formato de data Python (ex: '%Y-%m-%d' ou '%d/%m/%Y') para um formato Qt (ex: 'yyyy-MM-dd' ou 'dd/MM/yyyy').
+
+        Faz substituições simples — não cobre todos os casos complexos, mas atende aos formatos usados nas preferências.
+        """
+        try:
+            if not pyfmt:
+                return 'MM-dd-yyyy'
+            s = pyfmt
+            # replacements
+            s = s.replace('%Y', 'yyyy')
+            s = s.replace('%y', 'yy')
+            s = s.replace('%m', 'MM')
+            s = s.replace('%d', 'dd')
+            s = s.replace('%b', 'MMM')
+            s = s.replace('%B', 'MMMM')
+            return s
+        except Exception:
+            return 'MM-dd-yyyy'
+
+    def show_query_mode_help(self):
+        """Exibe um diálogo explicando os dois modos de consulta."""
+        try:
+            msg = (
+                "Modos de consulta:\n\n"
+                "Metadados:\n"
+                "  - Usa arquivos JSON de metadados para construir automaticamente a SQL\n"
+                "  - Recomendado quando o módulo/agrupamentos estão disponíveis\n\n"
+                "Manual:\n"
+                "  - Permite selecionar tabelas e colunas livremente e montar a SQL manualmente\n"
+                "  - Use quando você precisa de consultas ad-hoc que não estão cobertas pelos metadados\n\n"
+                "Dica: alterne entre modos com os botões de rádio acima. Em 'Metadados' os controles manuais são desabilitados\n"
+                "para evitar conflitos; em 'Manual' os combos de módulo/agrupamento ficam desabilitados."
+            )
+            QMessageBox.information(self, "Ajuda - Modos de Consulta", msg)
+        except Exception:
+            pass
+
+    def _populate_filter_fields(self, agrup_meta: dict, agrupamento_id: str = None):
+        """Preenche `self.combo_filter_field` com campos sugeridos a partir do agrupamento.
+
+        Exibe dimensões (e some expressões derivadas) para que o usuário possa
+        escolher onde aplicar filtros.
+        """
+        try:
+            self.combo_filter_field.clear()
+            # assume enabled; will disable if no fields found
+            try:
+                self.combo_filter_field.setEnabled(True)
+            except Exception:
+                pass
+            # debug: mostrar informações iniciais sobre agrup_meta/agrupamento_id
+            if getattr(self, '_debug_filter_populate', False):
+                try:
+                    print(f"[DEBUG] _populate_filter_fields called: agrupamento_id={agrupamento_id} tipo_agrup_meta={type(agrup_meta)}")
+                    if isinstance(agrup_meta, dict):
+                        keys = list(agrup_meta.keys())
+                        print(f"[DEBUG] agrup_meta keys: {keys}")
+                        if 'agrupamentos' in agrup_meta and isinstance(agrup_meta.get('agrupamentos'), list):
+                            print(f"[DEBUG] agrup_meta.agrupamentos count: {len(agrup_meta.get('agrupamentos'))}")
+                except Exception:
+                    pass
+            # tenta localizar o agrupamento pelo id
+            agrup = None
+            # If agrup_meta is not provided or malformed, try to reload from QueryBuilder
+            if not agrup_meta or not isinstance(agrup_meta, dict):
+                try:
+                    agrup_meta = self.qb.carregar_agrupamentos(getattr(self, 'current_modulo', None))
+                except Exception:
+                    agrup_meta = agrup_meta or {}
+
+            if agrupamento_id and 'agrupamentos' in agrup_meta:
+                agrup = next((a for a in agrup_meta.get('agrupamentos', []) if a.get('id') == agrupamento_id), None)
+            if agrup is None and 'agrupamentos' in agrup_meta:
+                agrup = agrup_meta.get('agrupamentos', [])[0] if agrup_meta.get('agrupamentos') else None
+
+            fields = []
+            # build a quick mapping from column name -> friendly label using module metadata
+            field_label_map = {}
+            try:
+                module = getattr(self, 'current_modulo', None)
+                if module:
+                    mod_meta = self.qb.carregar_modulo(module)
+                    for tbl_key, tbl_def in (mod_meta.get('tabelas', {}) or {}).items():
+                        for section in ('padrao', 'avancado'):
+                            for c in (tbl_def.get('campos', {}).get(section, []) if isinstance(tbl_def.get('campos', {}), dict) else []):
+                                try:
+                                    nome = c.get('campo') if isinstance(c, dict) else str(c)
+                                    # prefer explicit mapping override when available
+                                    try:
+                                        override = get_field_label(module, nome)
+                                    except Exception:
+                                        override = None
+                                    if isinstance(c, dict) and c.get('label'):
+                                        label = c.get('label')
+                                    elif override:
+                                        label = override
+                                    else:
+                                        label = nome
+                                    field_label_map[nome.lower()] = label
+                                except Exception:
+                                    pass
+            except Exception:
+                field_label_map = {}
+            if agrup:
+                for dim in agrup.get('dimensoes', []):
+                    # prioriza metadado explícito de tipo quando presente
+                    detected_type = 'text'
+                    if isinstance(dim, dict):
+                        campo = dim.get('campo')
+                        # check mapping override first
+                        try:
+                            override = get_field_label(getattr(self, 'current_modulo', None), campo)
+                        except Exception:
+                            override = None
+                        if override:
+                            label = override
+                        else:
+                            label = self._prettify_field_label(dim.get('label') or campo)
+                        tipo = (dim.get('tipo') or '').lower()
+                        if 'mes' in tipo or 'ano' in tipo or 'date' in tipo or 'data' in tipo:
+                            detected_type = 'date'
+                        elif any(k in tipo for k in ('int', 'decimal', 'numeric', 'float', 'money')):
+                            detected_type = 'numeric'
+                        else:
+                            detected_type = 'text'
+                        # save richer meta: try extract schema.table.column if provided
+                        meta = {'expr': campo, 'type': detected_type}
+                        # if campo contains '.', try to capture table/column
+                        try:
+                            parts = re.split(r"\.|\[|\]", campo)
+                            # last two parts possibly table.column or schema.table.column
+                            parts = [p for p in parts if p]
+                            if len(parts) >= 2:
+                                meta['column_name'] = parts[-1]
+                                meta['table_name'] = parts[-2]
+                                if len(parts) >= 3:
+                                    meta['schema'] = parts[-3]
+                        except Exception:
+                            pass
+                        fields.append((label, meta))
+                    else:
+                        # dim é string com nome do campo — tentar inferir
+                        campo = dim
+                        # try mapping override using the raw column name
+                        try:
+                            col_candidate = re.split(r"\.|\[|\]", dim)[-1]
+                        except Exception:
+                            col_candidate = dim
+                        try:
+                            override = get_field_label(getattr(self, 'current_modulo', None), col_candidate)
+                        except Exception:
+                            override = None
+                        if override:
+                            label = override
+                        else:
+                            label = self._prettify_field_label(dim)
+                        # heurística: se o nome contém 'data' ou 'dt' assume date
+                        lower = (campo or '').lower()
+                        if 'data' in lower or lower.startswith('dt') or 'date' in lower:
+                            detected_type = 'date'
+                        else:
+                            detected_type = 'text'
+
+                        # tentar buscar no cache de colunas para detectar tipo real
+                        try:
+                            colname = re.split(r"\.|\[|\]", campo)[-1]
+                            found = None
+                            # busca em cache
+                            for cols in self._columns_cache.values():
+                                for c in cols:
+                                    if c.column_name and c.column_name.lower() == colname.lower():
+                                        found = c
+                                        break
+                                if found:
+                                    break
+                            if found:
+                                dt = (found.data_type or '').lower()
+                                if any(x in dt for x in ('date', 'time', 'datetime', 'timestamp')):
+                                    detected_type = 'date'
+                                elif any(x in dt for x in ('int', 'bigint', 'smallint', 'tinyint', 'decimal', 'numeric', 'float', 'real', 'money')):
+                                    detected_type = 'numeric'
+                                else:
+                                    detected_type = 'text'
+                        except Exception:
+                            pass
+
+                        # try to infer more accurate type by querying table metadata via QueryBuilder
+                        meta = {'expr': campo, 'type': detected_type}
+                        try:
+                            # attempt to parse campo as possibly schema.table.column or table.column
+                            parts = re.split(r"\.|\[|\]", campo)
+                            parts = [p for p in parts if p]
+                            colname = parts[-1] if parts else campo
+                            tablename = parts[-2] if len(parts) >= 2 else None
+                            schema = parts[-3] if len(parts) >= 3 else None
+                            if tablename:
+                                # query metadata via QueryBuilder to detect data type
+                                try:
+                                    cols = self.qb.get_table_columns(schema or 'dbo', tablename)
+                                    for c in cols:
+                                        if c.column_name and c.column_name.lower() == colname.lower():
+                                            dt = (c.data_type or '').lower()
+                                            if any(x in dt for x in ('date', 'time', 'datetime', 'timestamp')):
+                                                meta['type'] = 'date'
+                                            elif any(x in dt for x in ('int', 'bigint', 'smallint', 'tinyint', 'decimal', 'numeric', 'float', 'real', 'money')):
+                                                meta['type'] = 'numeric'
+                                            else:
+                                                meta['type'] = 'text'
+                                            meta['column_name'] = c.column_name
+                                            meta['table_name'] = tablename
+                                            meta['schema'] = schema or 'dbo'
+                                            break
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        # attempt to replace raw label with friendly mapping from module meta
+                        try:
+                            colname = re.split(r"\.|\[|\]", campo)[-1]
+                            if colname and colname.lower() in field_label_map:
+                                label = field_label_map.get(colname.lower(), label)
+                        except Exception:
+                            pass
+                        fields.append((label, meta))
+
+            # adiciona campos ao combo (display -> data)
+            for lbl, meta in fields:
+                try:
+                    self.combo_filter_field.addItem(lbl, meta)
+                except Exception:
+                    try:
+                        # fallback: adicione apenas label
+                        self.combo_filter_field.addItem(str(lbl))
+                    except Exception:
+                        pass
+            if getattr(self, '_debug_filter_populate', False):
+                try:
+                    print(f"[DEBUG] fields extracted from agrupamento: {len(fields)}; combo_count(before fallback)={self.combo_filter_field.count()}")
+                except Exception:
+                    pass
+            # se não houver campos detectados, tentar popular a partir dos metadados do módulo
+            if not fields:
+                try:
+                    module = getattr(self, 'current_modulo', None)
+                    if module:
+                        try:
+                            if getattr(self, '_debug_filter_populate', False):
+                                try:
+                                    print(f"[DEBUG] fallback: loading module meta for '{module}'")
+                                except Exception:
+                                    pass
+                            mod_meta = self.qb.carregar_modulo(module)
+                            # percorre tabelas e campos
+                            for tbl_key, tbl_def in (mod_meta.get('tabelas', {}) or {}).items():
+                                # campos padrão e avançado
+                                for section in ('padrao', 'avancado'):
+                                    for c in (tbl_def.get('campos', {}).get(section, []) if isinstance(tbl_def.get('campos', {}), dict) else []):
+                                        try:
+                                            nome = c.get('campo') if isinstance(c, dict) else str(c)
+                                            label = c.get('label') if isinstance(c, dict) and c.get('label') else self._prettify_field_label(nome)
+                                            tipo = (c.get('tipo') or '').lower() if isinstance(c, dict) else 'text'
+                                            ftype = 'text'
+                                            if 'date' in tipo or 'data' in tipo or 'mes' in tipo:
+                                                ftype = 'date'
+                                            elif any(k in tipo for k in ('int', 'decimal', 'numeric', 'float', 'money')):
+                                                ftype = 'numeric'
+                                            meta = {'expr': f"{tbl_key}.{nome}", 'type': ftype, 'table_name': tbl_key}
+                                            self.combo_filter_field.addItem(label, meta)
+                                        except Exception:
+                                            continue
+                            if getattr(self, '_debug_filter_populate', False):
+                                try:
+                                    print(f"[DEBUG] fallback added fields from module meta, combo_count={self.combo_filter_field.count()}")
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            # se ainda não houve campos detectados, mostrar um placeholder informativo
+            if not fields and self.combo_filter_field.count() == 0:
+                # fallback: tentar popular a partir das colunas atualmente selecionadas
+                try:
+                    fallback = []
+                    # prioriza selected_columns_list (campos que o usuário já escolheu)
+                    if hasattr(self, 'selected_columns_list'):
+                        for i in range(self.selected_columns_list.count()):
+                            txt = self.selected_columns_list.item(i).text()
+                            if txt:
+                                fallback.append((txt, {'expr': txt, 'type': 'text'}))
+                    # senão, usa columns_list
+                    if not fallback and hasattr(self, 'columns_list'):
+                        for i in range(self.columns_list.count()):
+                            txt = self.columns_list.item(i).text()
+                            if txt:
+                                fallback.append((txt, {'expr': txt, 'type': 'text'}))
+                    if fallback:
+                        for lbl, meta in fallback:
+                            self.combo_filter_field.addItem(lbl, meta)
+                    else:
+                        self.combo_filter_field.addItem("Nenhum campo disponível")
+                        self.combo_filter_field.setEnabled(False)
+                except Exception:
+                    try:
+                        self.combo_filter_field.addItem("Nenhum campo disponível")
+                        self.combo_filter_field.setEnabled(False)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"Falha ao popular campos de filtro: {e}")
+
+    def _on_add_filter_clicked(self):
+        """Cria expressão de filtro a partir dos controles e insere em where_input."""
+        try:
+            data = self.combo_filter_field.currentData()
+            if not data:
+                QMessageBox.warning(self, "Aviso", "Selecione um campo para filtrar.")
+                return
+            # monta referência qualificada do campo
+            # se estivermos em modo manual, NÃO substituir o nome da tabela por alias —
+            # mantém a referência tal como foi selecionada pelo usuário
+            try:
+                mode = getattr(self, 'modo_consulta', None) or getattr(self, 'modo_consulta', None)
+            except Exception:
+                mode = None
+            if mode == 'manual':
+                # se meta contém coluna/table/schema use estes valores
+                try:
+                    col = data.get('column_name') if isinstance(data, dict) else None
+                    table = data.get('table_name') if isinstance(data, dict) else None
+                    schema = data.get('schema') if isinstance(data, dict) else None
+                except Exception:
+                    col = table = schema = None
+                if col and table:
+                    schema = schema or 'dbo'
+                    field_expr = f"[{schema}].[{table}].[{col}]"
+                else:
+                    # fallback: use raw expr but strip trailing datatype hints like ' (datetime)'
+                    raw = data.get('expr') if isinstance(data, dict) else str(data)
+                    if raw is None:
+                        raw = ''
+                    expr_clean = re.sub(r"\s*\([^\)]+\)\s*$", "", raw).strip()
+                    field_expr = expr_clean
+            else:
+                # default behavior: use qualifying with aliases when possible
+                field_expr = self._qualify_field(data)
+            ftype = data.get('type') or 'text'
+            op = self.combo_filter_op.currentText()
+
+            # lê valores do widget correto conforme o tipo
+            v1 = None
+            v2 = None
+            if ftype == 'date':
+                # se widgets de data visíveis, usar seus valores
+                try:
+                    if self.filter_date1.isVisible():
+                        v1 = self.filter_date1.date().toString('MM-dd-yyyy')
+                    if self.filter_date2.isVisible():
+                        v2 = self.filter_date2.date().toString('MM-dd-yyyy')
+                except Exception:
+                    v1 = None; v2 = None
+            elif ftype == 'numeric':
+                try:
+                    if self.filter_num1.isVisible():
+                        v1 = str(self.filter_num1.value())
+                    if self.filter_num2.isVisible():
+                        v2 = str(self.filter_num2.value())
+                except Exception:
+                    v1 = None; v2 = None
+            else:
+                # texto/libre
+                v1 = self.filter_value_input.text().strip()
+                v2 = self.filter_value_input_to.text().strip()
+
+            if (not v1 or v1 == '') and op not in ('IN',):
+                QMessageBox.warning(self, "Aviso", "Informe um valor para o filtro.")
+                return
+
+            def quote_text(s: str) -> str:
+                # duplica aspas simples para evitar SQL injection simples (não é parametrizado)
+                return "'" + s.replace("'", "''") + "'"
+
+            expr = ''
+            if op == 'BETWEEN':
+                if not v2 or v2 == '':
+                    QMessageBox.warning(self, "Aviso", "Informe o segundo valor para BETWEEN.")
+                    return
+                if ftype == 'numeric':
+                    expr = f"{field_expr} BETWEEN {v1} AND {v2}"
+                elif ftype == 'date':
+                    a = quote_text(self.normalize_date(v1))
+                    b = quote_text(self.normalize_date(v2))
+                    expr = f"{field_expr} BETWEEN {a} AND {b}"
+                else:
+                    expr = f"{field_expr} BETWEEN {quote_text(v1)} AND {quote_text(v2)}"
+            elif op == 'IN':
+                # split por vírgula e quote cada item conforme tipo
+                raw = v1 or ''
+                items = [s.strip() for s in raw.split(',') if s.strip()]
+                if not items:
+                    QMessageBox.warning(self, "Aviso", "Informe pelo menos um valor para IN.")
+                    return
+                if ftype == 'numeric':
+                    quoted = ', '.join([str(float(it)) if re.match(r"^[\d\-\.]+$", it) else it for it in items])
+                elif ftype == 'date':
+                    quoted = ', '.join([quote_text(self.normalize_date(it)) for it in items])
+                else:
+                    quoted = ', '.join([quote_text(it) for it in items])
+                expr = f"{field_expr} IN ({quoted})"
+            elif op == 'LIKE':
+                if ftype == 'numeric':
+                    expr = f"{field_expr} LIKE {v1}"
+                else:
+                    expr = f"{field_expr} LIKE {quote_text(v1)}"
+            else:
+                # comparadores simples
+                if ftype == 'numeric':
+                    expr = f"{field_expr} {op} {v1}"
+                elif ftype == 'date':
+                    expr = f"{field_expr} {op} {quote_text(self.normalize_date(v1))}"
+                else:
+                    expr = f"{field_expr} {op} {quote_text(v1)}"
+
+            # prepare parametrized filter (expr, params)
+            params = []
+            # determine params based on operator and type
+            if op == 'BETWEEN':
+                if ftype == 'numeric':
+                    try:
+                        a = float(v1)
+                        b = float(v2)
+                    except Exception:
+                        a = v1; b = v2
+                    param_expr = f"{field_expr} BETWEEN ? AND ?"
+                    params = [a, b]
+                elif ftype == 'date':
+                    a = self._date_to_iso(v1)
+                    b = self._date_to_iso(v2)
+                    param_expr = f"{field_expr} BETWEEN ? AND ?"
+                    params = [a, b]
+                else:
+                    param_expr = f"{field_expr} BETWEEN ? AND ?"
+                    params = [v1, v2]
+            elif op == 'IN':
+                raw = v1 or ''
+                items = [s.strip() for s in raw.split(',') if s.strip()]
+                if not items:
+                    QMessageBox.warning(self, "Aviso", "Informe pelo menos um valor para IN.")
+                    return
+                placeholders = ', '.join(['?'] * len(items))
+                param_expr = f"{field_expr} IN ({placeholders})"
+                if ftype == 'numeric':
+                    conv = []
+                    for it in items:
+                        try:
+                            conv.append(float(it))
+                        except Exception:
+                            conv.append(it)
+                    params = conv
+                elif ftype == 'date':
+                    params = [self._date_to_iso(it) for it in items]
+                else:
+                    params = [it for it in items]
+            elif op == 'LIKE':
+                param_expr = f"{field_expr} LIKE ?"
+                if ftype == 'numeric':
+                    params = [v1]
+                else:
+                    params = [v1]
+            else:
+                # comparadores simples
+                param_expr = f"{field_expr} {op} ?"
+                if ftype == 'numeric':
+                    try:
+                        params = [int(v1) if str(v1).isdigit() else float(v1)]
+                    except Exception:
+                        params = [v1]
+                elif ftype == 'date':
+                    params = [self._date_to_iso(v1)]
+                else:
+                    params = [v1]
+
+            # adiciona à lista parametrizada
+            try:
+                # store meta together to allow editing/changing field later
+                self._param_filters.append((param_expr, params, data))
+            except Exception:
+                pass
+
+            # atualiza a lista visível de filtros parametrizados
+            try:
+                self._refresh_filters_list()
+            except Exception:
+                pass
+
+            # insere preview textual no where_input para ajudar o usuário
+            try:
+                # monta representação legível com valores embutidos para preview
+                def preview_quote(val, t):
+                    if t == 'numeric':
+                        return str(val)
+                    return f"'{val}'"
+
+                if params:
+                    if op == 'BETWEEN':
+                        pv = f"{field_expr} BETWEEN {preview_quote(params[0], ftype)} AND {preview_quote(params[1], ftype)}"
+                    elif op == 'IN':
+                        pv = f"{field_expr} IN ({', '.join(preview_quote(p, ftype) for p in params)})"
+                    else:
+                        pv = f"{field_expr} {op} {preview_quote(params[0], ftype)}"
+                else:
+                    pv = param_expr
+
+                current = self.where_input.toPlainText().strip()
+                if not current:
+                    new_text = pv
+                else:
+                    new_text = current + ' AND ' + pv
+                self.where_input.setPlainText(new_text)
+            except Exception:
+                pass
+
+            # log
+            try:
+                if getattr(self, 'session_logger', None):
+                    self.session_logger.log('add_filter', 'Filtro adicionado (parametrizado)', {'expr': param_expr, 'params_count': len(params)})
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Falha ao adicionar filtro:\n{e}")
+
+    # --- Gerenciamento de filtros parametrizados (lista / remover / limpar) ---
+    def _format_param_filter_preview(self, expr: str, params: list) -> str:
+        """Gera uma representação legível do filtro parametrizado para exibir na lista."""
+        try:
+            def fmt(p):
+                if p is None:
+                    return 'NULL'
+                if isinstance(p, (int, float)):
+                    return str(p)
+                # datas em formato ISO - mostrar com aspas
+                return f"'{p}'"
+            if not params:
+                return expr
+            # tenta substituir apenas placeholders para tornar preview legível
+            if expr.count('?') == len(params):
+                parts = expr.split('?')
+                out = ''.join(parts[i] + (fmt(params[i]) if i < len(params) else '') for i in range(len(parts)))
+                # append trailing part
+                if len(parts) > len(params):
+                    out = out
+                return out
+            # fallback: show expr + params
+            return f"{expr} [{', '.join(fmt(p) for p in params)}]"
+        except Exception:
+            try:
+                return f"{expr} [{', '.join(map(str, params))}]"
+            except Exception:
+                return expr
+
+    def _refresh_filters_list(self):
+        """Atualiza `self.filters_list` a partir de `self._param_filters` e reconstroi o preview em `where_input`."""
+        try:
+            # salva texto atual do WHERE para permitir desfazer
+            try:
+                prev_where = self.where_input.toPlainText()
+            except Exception:
+                prev_where = ''
+
+            self.filters_list.clear()
+            previews = []
+            for item in (self._param_filters or []):
+                # suportar formatos antigos e novos
+                expr = None; params = None; meta = None
+                try:
+                    if isinstance(item, (list, tuple)):
+                        if len(item) >= 2:
+                            expr = item[0]; params = item[1]
+                        if len(item) >= 3:
+                            meta = item[2]
+                    elif isinstance(item, dict):
+                        expr = item.get('expr'); params = item.get('params'); meta = item.get('meta')
+                except Exception:
+                    continue
+                pv = self._format_param_filter_preview(expr, params)
+                it = QListWidgetItem(pv)
+                # armazenar a tupla (expr, params, meta) no UserRole
+                it.setData(Qt.UserRole, (expr, params, meta))
+                self.filters_list.addItem(it)
+                previews.append(pv)
+
+            # sincroniza WHERE sempre com os filtros parametrizados
+            new_where = ' AND '.join(previews) if previews else ''
+            # se houve alteração efetiva no WHERE, guarda no histórico para permitir múltiplos undo
+            if new_where != prev_where:
+                try:
+                    # inicializa history se necessário
+                    if not hasattr(self, '_where_history'):
+                        self._where_history = []
+                        self._where_history_limit = 50
+                    # empilha valor anterior
+                    self._where_history.append(prev_where)
+                    # clear redo stack on new action
+                    try:
+                        self._where_redo = []
+                    except Exception:
+                        pass
+                    # limita tamanho
+                    if len(self._where_history) > getattr(self, '_where_history_limit', 50):
+                        self._where_history.pop(0)
+                except Exception:
+                    pass
+            # habilita/desabilita botão de desfazer conforme histórico
+            try:
+                has_hist = bool(getattr(self, '_where_history', []))
+                self.btn_undo_where.setEnabled(has_hist)
+            except Exception:
+                pass
+            try:
+                self.where_input.setPlainText(new_where)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"Erro ao atualizar lista de filtros: {e}")
+
+    def _remove_selected_filter(self):
+        """Remove os filtros selecionados na lista (mantém ordem dos demais)."""
+        try:
+            sel = self.filters_list.selectedIndexes()
+            if not sel:
+                QMessageBox.information(self, "Informação", "Selecione ao menos um filtro para remover.")
+                return
+            # coleta índices únicos e ordena descendente para remover sem reindexar problemas
+            idxs = sorted({i.row() for i in sel}, reverse=True)
+            for i in idxs:
+                try:
+                    self._param_filters.pop(i)
+                except Exception:
+                    pass
+            # atualiza lista e preview
+            self._refresh_filters_list()
+            try:
+                if getattr(self, 'session_logger', None):
+                    self.session_logger.log('remove_filter', f'Removeu {len(idxs)} filtro(s)')
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Falha ao remover filtros:\n{e}")
+
+    def _edit_selected_filter(self):
+        """Edita um filtro selecionado com widgets adequados ao tipo (data/número/texto) e operador.
+
+        Permite editar operador e valores. Ao salvar, atualiza `self._param_filters` e a visualização.
+        """
+        try:
+            sel = self.filters_list.selectedItems()
+            if not sel:
+                QMessageBox.information(self, "Informação", "Selecione exatamente um filtro para editar.")
+                return
+            if len(sel) > 1:
+                QMessageBox.information(self, "Informação", "Selecione apenas um filtro para editar.")
+                return
+            item = sel[0]
+            data = item.data(Qt.UserRole)
+            if not data or not isinstance(data, (list, tuple)):
+                QMessageBox.warning(self, "Aviso", "Filtro inválido para edição.")
+                return
+            # support stored formats: (expr, params) or (expr, params, meta)
+            expr = data[0] if len(data) > 0 else None
+            params = data[1] if len(data) > 1 else []
+            meta = data[2] if len(data) > 2 else None
+
+            # tenta inferir field e operador a partir da expressão parametrizada
+            field = expr
+            op = None
+            m = re.search(r"\bBETWEEN\b", expr, re.IGNORECASE)
+            if m:
+                op = 'BETWEEN'
+                field = re.split(r"\bBETWEEN\b", expr, flags=re.IGNORECASE)[0].strip()
+            elif re.search(r"\bIN\s*\(", expr, re.IGNORECASE):
+                op = 'IN'
+                field = re.split(r"\bIN\s*\(", expr, flags=re.IGNORECASE)[0].strip()
+            elif re.search(r"\bIS\s+NULL\b", expr, re.IGNORECASE):
+                op = 'IS NULL'
+                field = re.split(r"\bIS\s+NULL\b", expr, flags=re.IGNORECASE)[0].strip()
+            else:
+                # comparadores simples e LIKE
+                m2 = re.search(r"(?P<field>.+?)\s*(?P<op>>=|<=|!=|<>|=|>|<|LIKE)\s*(?P<rest>.+)$", expr, re.IGNORECASE)
+                if m2:
+                    op = m2.group('op').upper()
+                    field = m2.group('field').strip()
+            if not op:
+                # fallback para '='
+                op = '='
+
+            # detecta tipo a partir dos parâmetros atuais ou metadata (preferível)
+            detected_type = 'text'
+            try:
+                # prefer meta if available
+                if meta and isinstance(meta, dict) and meta.get('type'):
+                    detected_type = meta.get('type')
+                elif params:
+                    all_num = True
+                    all_date = True
+                    for p in params:
+                        if isinstance(p, (int, float)):
+                            all_date = False
+                            continue
+                        s = str(p)
+                        # numeric?
+                        if re.match(r'^-?\d+(?:\.\d+)?$', s):
+                            all_date = False
+                            continue
+                        all_num = False
+                        # date?
+                        try:
+                            vv = s
+                            if vv.endswith('Z') or vv.endswith('z'):
+                                vv = vv[:-1] + '+00:00'
+                            _dt.datetime.fromisoformat(vv)
+                        except Exception:
+                            all_date = False
+                    if all_num and not all_date:
+                        detected_type = 'numeric'
+                    elif all_date and not all_num:
+                        detected_type = 'date'
+                    else:
+                        detected_type = 'text'
+            except Exception:
+                detected_type = 'text'
+
+            # constrói diálogo de edição
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Editar filtro")
+            dlg.setMinimumWidth(520)
+            layout = QVBoxLayout(dlg)
+
+            # campo: permitir troca — popula com campos atualmente disponíveis no agrupamento
+            field_combo = QComboBox()
+            # try to populate from combo_filter_field entries (which hold meta)
+            try:
+                for i in range(self.combo_filter_field.count()):
+                    lbl = self.combo_filter_field.itemText(i)
+                    meta_item = self.combo_filter_field.itemData(i)
+                    field_combo.addItem(lbl, meta_item)
+                # try select the current field by matching the field expression
+                try:
+                    # match by meta if available
+                    sel_idx = None
+                    for i in range(field_combo.count()):
+                        md = field_combo.itemData(i)
+                        if md and isinstance(md, dict) and md.get('expr') and md.get('expr') == field:
+                            sel_idx = i; break
+                    if sel_idx is None:
+                        # try matching by display label
+                        for i in range(field_combo.count()):
+                            if field_combo.itemText(i).strip() == field:
+                                sel_idx = i; break
+                    if sel_idx is not None:
+                        field_combo.setCurrentIndex(sel_idx)
+                except Exception:
+                    pass
+            except Exception:
+                # fallback: show raw field text only
+                field_combo.addItem(field, None)
+
+            layout.addWidget(QLabel(f"Campo:"))
+            layout.addWidget(field_combo)
+
+            # tipo (permite ao usuário forçar interpretação do campo)
+            type_combo = QComboBox()
+            type_combo.addItems(["Texto", "Numérico", "Data"])
+            # define seleção atual
+            try:
+                if detected_type == 'numeric':
+                    type_combo.setCurrentText('Numérico')
+                elif detected_type == 'date':
+                    type_combo.setCurrentText('Data')
+                else:
+                    type_combo.setCurrentText('Texto')
+            except Exception:
+                pass
+            layout.addWidget(QLabel('Tipo:'))
+            layout.addWidget(type_combo)
+
+            # operador
+            op_combo = QComboBox()
+            ops = ["=", "!=", ">", "<", ">=", "<=", "BETWEEN", "IN", "LIKE", "IS NULL"]
+            op_combo.addItems(ops)
+            try:
+                op_combo.setCurrentText(op)
+            except Exception:
+                pass
+            layout.addWidget(QLabel("Operador:"))
+            layout.addWidget(op_combo)
+
+            # area de widgets para valores
+            val_area = QVBoxLayout()
+
+            # texto simples / IN - QLineEdit
+            txt_single = QLineEdit()
+            txt_single.setPlaceholderText('Valor')
+
+            # IN editor: token-based list (visual)
+            token_widget = QListWidget()
+            token_widget.setSelectionMode(QListWidget.ExtendedSelection)
+            token_input_layout = QHBoxLayout()
+            token_input = QLineEdit()
+            token_input.setPlaceholderText('Adicionar valor e pressionar Enter')
+            token_add_btn = QPushButton('+')
+            token_input_layout.addWidget(token_input)
+            token_input_layout.addWidget(token_add_btn)
+            # helper to add token
+            def _add_token():
+                txt = token_input.text().strip()
+                if not txt:
+                    return
+                # avoid duplicates
+                for i in range(token_widget.count()):
+                    if token_widget.item(i).text() == txt:
+                        token_input.clear(); return
+                it = QListWidgetItem(txt)
+                token_widget.addItem(it)
+                token_input.clear()
+            token_add_btn.clicked.connect(_add_token)
+            token_input.returnPressed.connect(_add_token)
+
+            # suporte a remoção/edição via tecla Delete e menu de contexto
+            def _remove_selected_tokens():
+                sel = token_widget.selectedItems()
+                if not sel:
+                    return
+                for it in sel:
+                    row = token_widget.row(it)
+                    token_widget.takeItem(row)
+
+            def _edit_token(item: QListWidgetItem):
+                try:
+                    old = item.text()
+                    new, ok = QInputDialog.getText(dlg, 'Editar token', 'Valor:', QLineEdit.Normal, old)
+                    if ok and new and new.strip() and new.strip() != old:
+                        # evitar duplicatas
+                        new = new.strip()
+                        for i in range(token_widget.count()):
+                            if token_widget.item(i).text() == new:
+                                QMessageBox.warning(dlg, 'Duplicado', 'Valor já existe na lista de tokens.'); return
+                        item.setText(new)
+                except Exception:
+                    pass
+
+            # context menu
+            token_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+            def _on_token_context(pos):
+                try:
+                    menu = QMenu()
+                    act_remove = QAction('Remover', dlg)
+                    act_edit = QAction('Editar', dlg)
+                    act_remove.triggered.connect(_remove_selected_tokens)
+                    menu.addAction(act_remove)
+                    # allow edit only if single selection
+                    if len(token_widget.selectedItems()) == 1:
+                        act_edit.triggered.connect(lambda: _edit_token(token_widget.selectedItems()[0]))
+                        menu.addAction(act_edit)
+                    menu.exec_(token_widget.mapToGlobal(pos))
+                except Exception:
+                    pass
+            token_widget.customContextMenuRequested.connect(_on_token_context)
+
+            # double click => edit
+            token_widget.itemDoubleClicked.connect(lambda it: _edit_token(it))
+
+            # event filter to catch Delete key
+            class _TokenEventFilter(QObject):
+                def __init__(self, parent=None):
+                    super().__init__(parent)
+                def eventFilter(self, obj, event):
+                    try:
+                        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Delete:
+                            _remove_selected_tokens()
+                            return True
+                    except Exception:
+                        pass
+                    return False
+            try:
+                ef = _TokenEventFilter(token_widget)
+                token_widget._token_event_filter = ef
+                token_widget.installEventFilter(ef)
+                # garantir que o widget receba foco para capturar teclas
+                token_widget.setFocusPolicy(Qt.StrongFocus)
+            except Exception:
+                pass
+
+            # numericos
+            num_single = QDoubleSpinBox()
+            num_single.setRange(-1e12, 1e12)
+            num_single.setDecimals(6)
+
+            num_a = QDoubleSpinBox()
+            num_a.setRange(-1e12, 1e12)
+            num_a.setDecimals(6)
+            num_b = QDoubleSpinBox()
+            num_b.setRange(-1e12, 1e12)
+            num_b.setDecimals(6)
+
+            # datas
+            date_single = QDateEdit()
+            date_single.setCalendarPopup(True)
+            date_single.setDisplayFormat(self._python_dateformat_to_qt(getattr(self.window(), 'date_format', '%m-%d-%Y')))
+            try:
+                date_single.setDate(QDate.currentDate())
+            except Exception:
+                pass
+
+            date_a = QDateEdit()
+            date_a.setCalendarPopup(True)
+            date_a.setDisplayFormat(self._python_dateformat_to_qt(getattr(self.window(), 'date_format', '%m-%d-%Y')))
+            try:
+                date_a.setDate(QDate.currentDate())
+            except Exception:
+                pass
+            date_b = QDateEdit()
+            date_b.setCalendarPopup(True)
+            date_b.setDisplayFormat(self._python_dateformat_to_qt(getattr(self.window(), 'date_format', '%m-%d-%Y')))
+            try:
+                date_b.setDate(QDate.currentDate())
+            except Exception:
+                pass
+
+            # Inicializa valores a partir de params
+            try:
+                if detected_type == 'numeric':
+                    if params:
+                        if len(params) >= 1:
+                            num_single.setValue(float(params[0]))
+                        if len(params) >= 2:
+                            num_a.setValue(float(params[0])); num_b.setValue(float(params[1]))
+                elif detected_type == 'date':
+                    def try_set_date(widget, s):
+                        try:
+                            vv = s
+                            if vv.endswith('Z') or vv.endswith('z'):
+                                vv = vv[:-1] + '+00:00'
+                            dt = _dt.datetime.fromisoformat(vv)
+                            widget.setDate(QDate(dt.year, dt.month, dt.day))
+                        except Exception:
+                            try:
+                                # try parsing as YYYY-MM-DD
+                                dt = _dt.datetime.strptime(str(s)[:10], '%Y-%m-%d')
+                                widget.setDate(QDate(dt.year, dt.month, dt.day))
+                            except Exception:
+                                pass
+                    if params:
+                        if len(params) >= 1:
+                            try_set_date(date_single, params[0])
+                        if len(params) >= 2:
+                            try_set_date(date_a, params[0]); try_set_date(date_b, params[1])
+                else:
+                    if params:
+                        if op == 'IN':
+                            try:
+                                token_widget.clear()
+                                for p in params:
+                                    token_widget.addItem(QListWidgetItem(str(p)))
+                            except Exception:
+                                pass
+                        elif op == 'BETWEEN' and len(params) >= 2:
+                            txt_single.setText(str(params[0]));
+                            try:
+                                token_widget.clear()
+                                token_widget.addItem(QListWidgetItem(str(params[1])))
+                            except Exception:
+                                pass
+                        else:
+                            txt_single.setText(str(params[0]))
+            except Exception:
+                pass
+
+            # add widgets to layout but control visibility
+            val_area.addWidget(txt_single)
+            # IN token editor area
+            val_area.addWidget(token_widget)
+            val_area.addLayout(token_input_layout)
+            val_area.addWidget(num_single)
+            h_ab = QHBoxLayout()
+            h_ab.addWidget(num_a); h_ab.addWidget(num_b)
+            val_area.addLayout(h_ab)
+            val_area.addWidget(date_single)
+            h_dates = QHBoxLayout(); h_dates.addWidget(date_a); h_dates.addWidget(date_b)
+            val_area.addLayout(h_dates)
+
+            layout.addLayout(val_area)
+
+            # helper para ajustar visibilidade
+            def update_value_widgets(op_text=None, dtype=None):
+                if op_text is None:
+                    o = op_combo.currentText()
+                else:
+                    o = op_text
+                dtp = dtype or detected_type
+                # hide all initially
+                for w in (txt_single, token_widget, token_input, token_add_btn, num_single, num_a, num_b, date_single, date_a, date_b):
+                    try:
+                        w.setVisible(False)
+                    except Exception:
+                        pass
+                if o == 'IS NULL':
+                    return
+                if o == 'IN':
+                    # show token editor for IN values
+                    token_widget.setVisible(True); token_input.setVisible(True); token_add_btn.setVisible(True)
+                    return
+                if o == 'BETWEEN':
+                    if dtp == 'numeric':
+                        num_a.setVisible(True); num_b.setVisible(True)
+                    elif dtp == 'date':
+                        date_a.setVisible(True); date_b.setVisible(True)
+                    else:
+                        # text between uses a second value: use txt_single and token_widget for second
+                        txt_single.setVisible(True); token_widget.setVisible(True); token_input.setVisible(True); token_add_btn.setVisible(True)
+                    return
+                # simple comparators and LIKE
+                if dtp == 'numeric':
+                    num_single.setVisible(True)
+                elif dtp == 'date':
+                    date_single.setVisible(True)
+                else:
+                    txt_single.setVisible(True)
+
+            # connect operator and type changes
+            op_combo.currentTextChanged.connect(lambda _: update_value_widgets())
+            def on_type_change(text):
+                tmap = 'text'
+                if text == 'Numérico':
+                    tmap = 'numeric'
+                elif text == 'Data':
+                    tmap = 'date'
+                update_value_widgets(None, tmap)
+            type_combo.currentTextChanged.connect(on_type_change)
+
+            buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            layout.addWidget(buttons)
+
+            def accept_changes():
+                new_op = op_combo.currentText()
+                new_params = []
+                # collect values according to widgets visible
+                try:
+                    if new_op == 'IS NULL':
+                        param_expr = f"{field} IS NULL"
+                        new_params = []
+                    elif new_op == 'IN':
+                        # collect tokens from the token widget
+                        parts = [token_widget.item(i).text() for i in range(token_widget.count())]
+                        # fallback: allow typing directly in the input
+                        if not parts:
+                            raw = token_input.text().strip()
+                            parts = [p.strip() for p in raw.split(',') if p.strip()]
+                        if not parts:
+                            QMessageBox.warning(dlg, 'Valor ausente', 'Informe pelo menos um valor para IN.')
+                            return
+                        placeholders = ', '.join(['?'] * len(parts))
+                        param_expr = f"{field} IN ({placeholders})"
+                        if detected_type == 'numeric':
+                            conv = []
+                            for p in parts:
+                                try:
+                                    conv.append(int(p) if re.match(r'^-?\d+$', p) else float(p))
+                                except Exception:
+                                    conv.append(p)
+                            new_params = conv
+                        elif detected_type == 'date':
+                            new_params = [self._date_to_iso(p) for p in parts]
+                        else:
+                            new_params = parts
+                    elif new_op == 'BETWEEN':
+                        if detected_type == 'numeric':
+                            a = num_a.value(); b = num_b.value()
+                            param_expr = f"{field} BETWEEN ? AND ?"
+                            new_params = [a, b]
+                        elif detected_type == 'date':
+                            a_q = date_a.date(); b_q = date_b.date()
+                            a = f"{a_q.year()}-{a_q.month():02d}-{a_q.day():02d}"
+                            b = f"{b_q.year()}-{b_q.month():02d}-{b_q.day():02d}"
+                            param_expr = f"{field} BETWEEN ? AND ?"
+                            new_params = [a, b]
+                        else:
+                            a = txt_single.text().strip()
+                            # second value may be in token widget or typed directly
+                            if token_widget.count() > 0:
+                                b = token_widget.item(0).text().strip()
+                            else:
+                                b = token_input.text().strip()
+                            if not a or not b:
+                                QMessageBox.warning(dlg, 'Valor ausente', 'Para BETWEEN informe ambos os valores.')
+                                return
+                            param_expr = f"{field} BETWEEN ? AND ?"
+                            new_params = [a, b]
+                    else:
+                        # simple comparator or LIKE
+                        if detected_type == 'numeric':
+                            v = num_single.value()
+                            param_expr = f"{field} {new_op} ?"
+                            new_params = [v]
+                        elif detected_type == 'date':
+                            dq = date_single.date()
+                            v = f"{dq.year()}-{dq.month():02d}-{dq.day():02d}"
+                            param_expr = f"{field} {new_op} ?"
+                            new_params = [v]
+                        else:
+                            v = txt_single.text().strip()
+                            if not v and new_op != 'IS NULL':
+                                QMessageBox.warning(dlg, 'Valor ausente', 'Informe um valor para o filtro.')
+                                return
+                            param_expr = f"{field} {new_op} ?"
+                            new_params = [v]
+                except Exception as ee:
+                    QMessageBox.critical(dlg, 'Erro', f'Falha ao montar parâmetros: {ee}')
+                    return
+
+                # localizar índice do item e atualizar
+                idx = None
+                for i in range(self.filters_list.count()):
+                    if self.filters_list.item(i) is item:
+                        idx = i
+                        break
+                if idx is None:
+                    QMessageBox.warning(dlg, 'Aviso', 'Não foi possível localizar o filtro selecionado.')
+                    return
+                try:
+                    self._param_filters[idx] = (param_expr, new_params)
+                except Exception as e:
+                    QMessageBox.critical(dlg, 'Erro', f'Falha ao salvar filtro: {e}')
+                    return
+                dlg.accept()
+
+            buttons.accepted.connect(accept_changes)
+            buttons.rejected.connect(dlg.reject)
+
+            # inicializa visibilidade dos widgets com base no operador detectado
+            update_value_widgets(op, detected_type)
+
+            if dlg.exec_() == QDialog.Accepted:
+                # atualiza UI/lista e log
+                self._refresh_filters_list()
+                try:
+                    if getattr(self, 'session_logger', None):
+                        self.session_logger.log('edit_filter', 'Filtro editado (avançado)', {'field': field, 'op': op})
+                except Exception:
+                    pass
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Falha ao editar filtro:\n{e}")
+
+    def _undo_last_where(self):
+        """Restaura o texto do WHERE antes da última sincronização feita por `_refresh_filters_list`."""
+        hist = getattr(self, '_where_history', [])
+        if not hist:
+            QMessageBox.information(self, "Informação", "Nenhum estado anterior do WHERE disponível para desfazer.")
+            return
+        prev = None
+        try:
+            prev = hist.pop()
+        except Exception:
+            prev = None
+        if prev is None:
+            QMessageBox.information(self, "Informação", "Nenhum estado anterior do WHERE disponível para desfazer.")
+            return
+        # empilha estado atual no redo
+        try:
+            cur = self.where_input.toPlainText()
+            if not hasattr(self, '_where_redo'):
+                self._where_redo = []
+            self._where_redo.append(cur)
+            if len(self._where_redo) > getattr(self, '_where_history_limit', 50):
+                self._where_redo.pop(0)
+        except Exception:
+            pass
+        # restaura texto
+        try:
+            self.where_input.setPlainText(prev)
+        except Exception:
+            pass
+
+    def _redo_last_where(self):
+        """Refaz o último estado do WHERE que foi desfeito."""
+        redo = getattr(self, '_where_redo', [])
+        if not redo:
+            QMessageBox.information(self, "Informação", "Nenhum estado disponível para refazer.")
+            return
+        next_val = None
+        try:
+            next_val = redo.pop()
+        except Exception:
+            next_val = None
+        if next_val is None:
+            QMessageBox.information(self, "Informação", "Nenhum estado disponível para refazer.")
+            return
+        # empilha estado atual no histórico de desfazer
+        try:
+            cur = self.where_input.toPlainText()
+            if not hasattr(self, '_where_history'):
+                self._where_history = []
+            self._where_history.append(cur)
+            if len(self._where_history) > getattr(self, '_where_history_limit', 50):
+                self._where_history.pop(0)
+        except Exception:
+            pass
+        # restaura próximo valor
+        try:
+            self.where_input.setPlainText(next_val)
+        except Exception:
+            pass
+        # atualiza botões conforme ainda houver histórico/redo
+        try:
+            self.btn_undo_where.setEnabled(bool(getattr(self, '_where_history', [])))
+            self.btn_redo_where.setEnabled(bool(getattr(self, '_where_redo', [])))
+        except Exception:
+            pass
+    def _clear_param_filters(self):
+        """Limpa todos os filtros parametrizados."""
+        try:
+            if not self._param_filters:
+                return
+            reply = QMessageBox.question(self, "Confirmação", "Remover todos os filtros parametrizados?", QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.No:
+                return
+            self._param_filters = []
+            self._refresh_filters_list()
+            try:
+                if getattr(self, 'session_logger', None):
+                    self.session_logger.log('clear_filters', 'Limpou filtros parametrizados')
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Falha ao limpar filtros:\n{e}")
+
+    def set_query_mode(self, mode: str):
+        """Define o modo de consulta e habilita/desabilita controles relevantes.
+
+        mode: 'metadados' ou 'manual'
+        """
+        try:
+            mode = mode if mode in ('metadados', 'manual') else 'metadados'
+            self.modo_consulta = mode
+            is_meta = (mode == 'metadados')
+            # módulos/agrupamentos só relevantes em metadados
+            try:
+                if hasattr(self, 'combo_modulo') and self.combo_modulo is not None:
+                    self.combo_modulo.setEnabled(is_meta)
+                if hasattr(self, 'combo_agrupamento') and self.combo_agrupamento is not None:
+                    self.combo_agrupamento.setEnabled(is_meta)
+            except Exception:
+                pass
+
+            # controles de seleção manual (tabelas/colunas)
+            try:
+                self.tables_list.setEnabled(not is_meta)
+                self.columns_list.setEnabled(not is_meta)
+                self.selected_tables_list.setEnabled(not is_meta)
+                self.selected_columns_list.setEnabled(not is_meta)
+            except Exception:
+                pass
+
+            # atualizar estado dos rádios (caso chamada programática)
+            try:
+                if hasattr(self, 'mode_meta_radio'):
+                    self.mode_meta_radio.setChecked(is_meta)
+                if hasattr(self, 'mode_manual_radio'):
+                    self.mode_manual_radio.setChecked(not is_meta)
+            except Exception:
+                pass
+
+            # Atualiza hint visual e destaca controles relevantes
+            try:
+                if hasattr(self, 'mode_hint_label'):
+                    if is_meta:
+                        self.mode_hint_label.setText('Modo: Metadados — consultas automáticas')
+                        self.mode_hint_label.setStyleSheet('color: #1abc9c; font-weight: bold;')
+                    else:
+                        self.mode_hint_label.setText('Modo: Manual — selecione tabelas/colunas')
+                        self.mode_hint_label.setStyleSheet('color: #f39c12; font-weight: bold;')
+
+                # destaque leve nos controles associados
+                    try:
+                        # stronger visual highlight: border and background
+                        border_color = '#1abc9c' if is_meta else '#f39c12'
+                        border_style = f'2px solid {border_color}'
+
+                        if hasattr(self, 'combo_modulo') and self.combo_modulo is not None:
+                            self.combo_modulo.setStyleSheet('background-color: #ffffff;' if is_meta else 'background-color: #f0f0f0;')
+                        if hasattr(self, 'combo_agrupamento') and self.combo_agrupamento is not None:
+                            self.combo_agrupamento.setStyleSheet('background-color: #ffffff;' if is_meta else 'background-color: #f0f0f0;')
+
+                        tbl_bg = '#ffffff' if not is_meta else '#f8f9fa'
+                        col_bg = '#ffffff' if not is_meta else '#f8f9fa'
+                        if hasattr(self, 'tables_list') and self.tables_list is not None:
+                            self.tables_list.setStyleSheet(f'background-color: {tbl_bg};')
+                        if hasattr(self, 'columns_list') and self.columns_list is not None:
+                            self.columns_list.setStyleSheet(f'background-color: {col_bg};')
+                        if hasattr(self, 'selected_tables_list') and self.selected_tables_list is not None:
+                            self.selected_tables_list.setStyleSheet(f'background-color: {col_bg};')
+                        if hasattr(self, 'selected_columns_list') and self.selected_columns_list is not None:
+                            self.selected_columns_list.setStyleSheet(f'background-color: {col_bg};')
+
+                        # Apply temporary pulsing border to highlighted controls
+                        def apply_pulse(widget):
+                            try:
+                                if widget is None:
+                                    return
+                                original = widget.styleSheet() or ''
+                                widget.setStyleSheet(original + f'; border: {border_style};')
+                                # after 400ms switch to lighter border
+                                QTimer.singleShot(400, lambda: widget.setStyleSheet(original + f'; border: 1px solid {border_color};'))
+                                # after 1400ms restore original (remove border)
+                                QTimer.singleShot(1400, lambda: widget.setStyleSheet(original))
+                            except Exception:
+                                pass
+
+                        # choose which widgets to pulse based on mode
+                        if is_meta:
+                            apply_pulse(getattr(self, 'combo_modulo', None))
+                            apply_pulse(getattr(self, 'combo_agrupamento', None))
+                        else:
+                            apply_pulse(getattr(self, 'tables_list', None))
+                            apply_pulse(getattr(self, 'columns_list', None))
+                            apply_pulse(getattr(self, 'selected_tables_list', None))
+                            apply_pulse(getattr(self, 'selected_columns_list', None))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        except Exception:
+            pass
     def execute_query(self):
         """Executa a consulta"""
         sql = self.sql_preview.toPlainText().strip()
@@ -1650,7 +4003,22 @@ class QueryBuilderTab(QWidget):
         try:
             if getattr(self, 'session_logger', None):
                 self.session_logger.log('execute_query_attempt', 'Tentativa de execução', {'sql_preview': sql[:200]})
-            columns, data = self.qb.execute_query(sql)
+            # Prefer executing the parameterized SQL stored in `self.current_sql`.
+            # The preview (`self.sql_preview`) may have had '?' substituted for legibility
+            # and thus not contain parameter markers while `self.current_sql_params` is set.
+            exec_sql = getattr(self, 'current_sql', None) or sql
+            params = getattr(self, 'current_sql_params', None)
+            # If exec_sql appears to contain no parameter markers, but params is set, avoid
+            # passing params to the driver (prevents '0 parameter markers, but N supplied').
+            if params and '?' not in exec_sql:
+                # fallback: try executing current_sql (if different) otherwise drop params
+                if exec_sql is not sql and '?' in sql:
+                    exec_sql = sql
+                else:
+                    # driver would raise; safer to clear params so call executes the literal SQL
+                    params = None
+
+            columns, data = self.qb.execute_query(exec_sql, params)
             try:
                 if getattr(self, 'session_logger', None):
                     self.session_logger.log('execute_query_success', f'Retorno {len(data)} registros', {'rows': len(data)})
@@ -2262,9 +4630,9 @@ class ResultsTab(QWidget):
                         # format date-only using user preference if set in MainWindow
                         try:
                             main = self.window()
-                            date_fmt = getattr(main, 'date_format', '%Y-%m-%d')
+                            date_fmt = getattr(main, 'date_format', '%m-%d-%Y')
                         except Exception:
-                            date_fmt = '%Y-%m-%d'
+                            date_fmt = '%m-%d-%Y'
 
                         try:
                             import datetime as _d
@@ -2434,7 +4802,7 @@ class ResultsTab(QWidget):
                     include_table=config['include_table'],
                     columns=self.current_columns,
                     data=self.current_data,
-                    date_format=getattr(self, 'date_format', '%Y-%m-%d'),
+                    date_format=getattr(self, 'date_format', '%m-%d-%Y'),
                     number_decimals=int(getattr(self, 'number_decimals', 2))
                 )
                 
@@ -2456,10 +4824,10 @@ class ResultsTab(QWidget):
         # obtain preferences from main window if available
         try:
             main = self.window()
-            date_fmt = getattr(main, 'date_format', '%Y-%m-%d')
+            date_fmt = getattr(main, 'date_format', '%m-%d-%Y')
             decimals = int(getattr(main, 'number_decimals', 2))
         except Exception:
-            date_fmt = '%Y-%m-%d'
+            date_fmt = '%m-%d-%Y'
             decimals = 2
 
         try:
@@ -2568,7 +4936,7 @@ class ChartConfigDialog(QDialog):
 class PreferencesDialog(QDialog):
     """Dialog para preferências de usuário: formatação de datas e números."""
 
-    def __init__(self, parent=None, date_format='%Y-%m-%d', number_decimals=2):
+    def __init__(self, parent=None, date_format='%m-%d-%Y', number_decimals=2):
         super().__init__(parent)
         self.setWindowTitle('Preferências')
         self.date_format = date_format
@@ -2580,10 +4948,16 @@ class PreferencesDialog(QDialog):
 
         layout.addWidget(QLabel('Formato de data:'))
         self.date_combo = QComboBox()
+        self.date_combo.addItem('MM-DD-YYYY', '%m-%d-%Y')
         self.date_combo.addItem('YYYY-MM-DD', '%Y-%m-%d')
         self.date_combo.addItem('DD/MM/YYYY', '%d/%m/%Y')
         # set current
-        idx = 0 if self.date_format == '%Y-%m-%d' else 1
+        if self.date_format == '%m-%d-%Y':
+            idx = 0
+        elif self.date_format == '%Y-%m-%d':
+            idx = 1
+        else:
+            idx = 2
         self.date_combo.setCurrentIndex(idx)
         layout.addWidget(self.date_combo)
 
@@ -2915,7 +5289,8 @@ def main():
 
     # Janela principal
     window = MainWindow(user_data, selected_db)
-    window.show()
+    # Abrir maximizado por solicitação do usuário
+    window.showMaximized()
     
     sys.exit(app.exec_())
 

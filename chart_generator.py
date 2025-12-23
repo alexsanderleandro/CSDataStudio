@@ -76,7 +76,15 @@ class ChartGenerator:
                 raise ValueError(f"Coluna '{x_column}' não encontrada")
             if y_column not in df.columns:
                 raise ValueError(f"Coluna '{y_column}' não encontrada")
-            
+            # Tenta coerir a coluna Y para numérico quando necessário
+            # COUNT não exige valores numéricos (conta linhas), mas SUM/AVG/MIN/MAX sim
+            if aggregation in (AggregationType.SUM, AggregationType.AVG, AggregationType.MIN, AggregationType.MAX):
+                # Converte valores não numéricos para NaN
+                df[y_column] = pd.to_numeric(df[y_column], errors='coerce')
+                # Se não houver nenhum valor numérico válido, avisamos claramente
+                if df[y_column].dropna().empty:
+                    raise ValueError(f"no numeric data to plot for column '{y_column}'")
+
             # Aplica agregação
             if aggregation == AggregationType.COUNT:
                 agg_data = df.groupby(x_column)[y_column].count()
@@ -117,8 +125,14 @@ class ChartGenerator:
                 plt.xticks(rotation=45, ha='right')
             
             # Adiciona valores nas barras/colunas
+            # Formato de rótulo: se for contagem -> inteiro, senão mostrar com 2 casas decimais
+            fmt = '%.0f' if aggregation == AggregationType.COUNT else '%.2f'
             for container in ax.containers:
-                ax.bar_label(container, fmt='%.0f', padding=3)
+                try:
+                    ax.bar_label(container, fmt=fmt, padding=3)
+                except Exception:
+                    # Falha no label não impede o gráfico principal
+                    pass
             
             # Grid
             ax.grid(True, alpha=0.3, linestyle='--')
@@ -172,9 +186,18 @@ class ChartGenerator:
             for col in y_columns:
                 if col not in df.columns:
                     raise ValueError(f"Coluna '{col}' não encontrada")
-            
-            # Prepara dados
-            df_plot = df.set_index(x_column)[y_columns]
+            # Tenta coerir cada série para numérico; coleta quais colunas tem ao menos um valor numérico
+            numeric_cols = []
+            for col in y_columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                if not df[col].dropna().empty:
+                    numeric_cols.append(col)
+
+            if not numeric_cols:
+                raise ValueError(f"no numeric data to plot for any of the series: {', '.join(y_columns)}")
+
+            # Prepara dados usando apenas as colunas numéricas detectadas
+            df_plot = df.set_index(x_column)[numeric_cols]
             
             # Cria figura
             fig, ax = plt.subplots(figsize=(12, 6))

@@ -1,0 +1,48 @@
+{
+  "modulo": "vendas",
+  "agrupamentos": [
+    {
+      "id": "default",
+      "label": "Vendas por período",
+      "tabela": "[dbo].[CnsVendasRefPeriodo]",
+      "dimensoes": [
+        { "campo": "DataMovimento", "tipo": "mes_ano" },
+        "CodVendedor",
+        "CodCliente",
+        "CodProduto",
+        "CodRegiao",
+        "NomeEmpresa"
+      ],
+      "metricas": [
+        { "campo": "TotalProduto", "funcao": "SUM", "label": "TotalProduto" },
+        { "campo": "Quantidade", "funcao": "SUM", "label": "Quantidade" }
+      ],
+      "joins": [
+        {
+          "tabela": "[dbo].[Clientes]",
+          "on": "[dbo].[CnsVendasRefPeriodo].CodCliente = [dbo].[Clientes].CodCliente"
+        },
+        {
+          "tabela": "[dbo].[Vendedores]",
+          "on": "[dbo].[CnsVendasRefPeriodo].CodVendedor = [dbo].[Vendedores].CodVendedor"
+        },
+        {
+          "tabela": "[dbo].[Produtos]",
+          "on": "[dbo].[CnsVendasRefPeriodo].CodProduto = [dbo].[Produtos].CodProduto"
+        },
+        {
+          "tabela": "[dbo].[Empresas]",
+          "on": "[dbo].[CnsVendasRefPeriodo].CodEmpresa = [dbo].[Empresas].CodEmpresa"
+        },
+        {
+          "tabela": "[dbo].[Regioes]",
+          "on": "[dbo].[CnsVendasRefPeriodo].CodRegiao = [dbo].[Regioes].CodRegiao"
+        },
+        {
+          "tabela": "[dbo].[GrupoEstoque]",
+          "on": "[dbo].[CnsVendasRefPeriodo].CodGrupo = [dbo].[GrupoEstoque].CodGrupo"
+        }
+      ]
+    }
+  ]
+}
