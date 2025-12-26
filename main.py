@@ -1,7 +1,7 @@
-from PyQt5.QtWidgets import QMenu, QAction, QListWidgetItem
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QEvent, QTimer, QDate, QObject
+from PyQt5.QtWidgets import QMenu, QAction, QListWidgetItem, QApplication
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QEvent, QTimer, QDate, QObject, QPropertyAnimation
 from PyQt5.QtGui import QIcon, QFont, QColor
-from PyQt5.QtWidgets import QToolTip, QDialog, QVBoxLayout, QTextEdit
+from PyQt5.QtWidgets import QToolTip, QDialog, QVBoxLayout, QTextEdit, QGraphicsOpacityEffect
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QLineEdit, QComboBox, QDialogButtonBox, QMessageBox,
     QCheckBox, QHBoxLayout, QListWidget, QPushButton, QGroupBox,
@@ -52,21 +52,22 @@ class LoginDialog(QDialog):
         self.setup_ui()
     
     def setup_ui(self):
-        self.setWindowTitle("Login - CSData Studio")
+        # Ajusta título da janela para mostrar nome reduzido da empresa + indicador de tela
+        self.setWindowTitle("CEOsoftware ® | Login")
         self.setModal(True)
         self.setMinimumWidth(400)
-        
+
         layout = QVBoxLayout()
-        
-        # Título
-        title = QLabel(f"<h2>{APP_NAME}</h2>")
+
+        # Título principal: mostrar apenas o nome do app (mantendo estilo preto)
+        title = QLabel(f"<h2 style='color:#000000; margin:0;'>{APP_NAME}</h2>")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
-        
+
         version_label = QLabel(f"<i>Versão {Version.get_version()}</i>")
         version_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(version_label)
-        
+
         layout.addSpacing(20)
         # Se houver múltiplas opções de DB, exibe ComboBox
         if self.db_options:
@@ -77,13 +78,13 @@ class LoginDialog(QDialog):
             layout.addWidget(self.db_combo)
         else:
             self.db_combo = None
-        
+
         # Campos de login
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("Usuário")
         layout.addWidget(QLabel("Usuário:"))
         layout.addWidget(self.username_input)
-        
+
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Senha")
         self.password_input.setEchoMode(QLineEdit.Password)
@@ -99,19 +100,22 @@ class LoginDialog(QDialog):
         button_box.accepted.connect(self.handle_login)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
-        
+
         self.setLayout(layout)
 
     def handle_login(self):
         """Processa o login"""
         username = self.username_input.text().strip()
         password = self.password_input.text()
-        
+
         # Seleciona DB escolhido primeiro
         selected_cfg = None
         if self.db_combo:
             idx = self.db_combo.currentIndex()
-            selected_cfg = self.db_options[idx]
+            try:
+                selected_cfg = self.db_options[idx]
+            except Exception:
+                selected_cfg = None
         else:
             # fallback: tenta ler a configuração padrão
             from config_manager import ConfigManager
@@ -135,7 +139,6 @@ class LoginDialog(QDialog):
                     )
                     return
 
-                # Valida usando Trusted Connection (pede razão para mostrar mensagens apropriadas)
                 user_data, reason = verify_user(None, None, selected_cfg, return_reason=True)
 
             else:
@@ -174,6 +177,12 @@ class LoginDialog(QDialog):
                             self,
                             "Erro de Login",
                             "Usuário ou senha inválidos."
+                        )
+                    elif reason == 'cannot_validate_encrypted_password':
+                        QMessageBox.critical(
+                            self,
+                            "Erro de Login",
+                            "Senha criptografada no servidor e procedimento de validação ausente. Contate o DBA."
                         )
                     else:
                         QMessageBox.critical(
@@ -346,10 +355,21 @@ class QueryBuilderTab(QWidget):
     
     def setup_ui(self):
         layout = QHBoxLayout()
+        # ajustar margens e espaçamento principais
+        try:
+            layout.setContentsMargins(8, 8, 8, 8)
+            layout.setSpacing(8)
+        except Exception:
+            pass
         
         # === PAINEL ESQUERDO: Seleção ===
         left_panel = QWidget()
-        left_layout = QVBoxLayout()
+        left_layout = QVBoxLayout(left_panel)
+        try:
+            left_layout.setContentsMargins(6, 6, 6, 6)
+            left_layout.setSpacing(6)
+        except Exception:
+            pass
         
         # Tabelas disponíveis
         left_layout.addWidget(QLabel("<b>📂 De onde vêm os dados?</b>"))
@@ -364,6 +384,12 @@ class QueryBuilderTab(QWidget):
             self.table_search.setClearButtonEnabled(True)
         except Exception:
             pass
+        # ajustar tamanho: largura maior, altura reduzida
+        try:
+            self.table_search.setMinimumWidth(340)
+            self.table_search.setFixedHeight(28)
+        except Exception:
+            pass
         left_layout.addWidget(self.table_search)
 
         self.tables_list = QListWidget()
@@ -371,71 +397,136 @@ class QueryBuilderTab(QWidget):
         # Menu de contexto para tabelas: permitir Mostrar dependências via botão direito
         self.tables_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tables_list.customContextMenuRequested.connect(self.on_tables_context_menu)
+        # altura mínima da lista de tabelas para melhor visibilidade
+        try:
+            self.tables_list.setMinimumHeight(220)
+        except Exception:
+            pass
         left_layout.addWidget(self.tables_list)
         
-        # Botão para adicionar tabelas
-        btn_add_tables = QPushButton("➕ Adicionar fontes selecionadas")
-        btn_add_tables.clicked.connect(self.add_selected_tables)
-        left_layout.addWidget(btn_add_tables)
-        
-        left_panel.setLayout(left_layout)
-        
-        # === PAINEL CENTRAL: Tabelas e Colunas Selecionadas ===
-        center_panel = QWidget()
-        center_layout = QVBoxLayout()
-        
-        center_layout.addWidget(QLabel("<b>📌 Fontes de dados escolhidas</b>"))
+    # (Botão 'Adicionar fontes selecionadas' removido - operação feita via duplo-clique/toggle)
+        # Fontes de dados escolhidas (mover aqui, abaixo do campo de pesquisa)
+        left_layout.addWidget(QLabel("<b>📌 Fontes de dados escolhidas</b>"))
         self.selected_tables_list = QListWidget()
-        center_layout.addWidget(self.selected_tables_list)
+        try:
+            self.selected_tables_list.setMaximumHeight(140)
+        except Exception:
+            pass
+        left_layout.addWidget(self.selected_tables_list)
         
-        # Botões para gerenciar tabelas
-        btn_layout = QHBoxLayout()
+        # Botões para gerenciar tabelas (mover para abaixo de 'Fontes de dados escolhidas')
+        tbl_btns = QHBoxLayout()
         btn_remove_table = QPushButton("➖ Remover fonte")
         btn_remove_table.clicked.connect(self.remove_selected_table)
-        btn_layout.addWidget(btn_remove_table)
-        
+        tbl_btns.addWidget(btn_remove_table)
+        self.btn_remove_table = btn_remove_table
+
         btn_clear_tables = QPushButton("🧹 Limpar tudo")
         btn_clear_tables.clicked.connect(self.clear_selection)
-        btn_layout.addWidget(btn_clear_tables)
-        center_layout.addLayout(btn_layout)
+        tbl_btns.addWidget(btn_clear_tables)
+        self.btn_clear_tables = btn_clear_tables
+
+        left_layout.addLayout(tbl_btns)
+
+        left_panel.setLayout(left_layout)
         
-        center_layout.addWidget(QLabel("<b>🧩 Informações disponíveis</b>"))
-        # Busca rápida nas colunas disponíveis
+        # === PAINEL CENTRAL: dividido horizontalmente em Manual (esquerda)
+        # e Pré-definida (direita) ===
+        center_panel = QWidget()
+        center_layout = QVBoxLayout(center_panel)
+        try:
+            center_layout.setContentsMargins(6, 6, 6, 6)
+            center_layout.setSpacing(6)
+        except Exception:
+            pass
+
+        # === PAINEL CENTRAL: Manual / Pré-definida (controlado por RadioButton) ===
+
+        # --- Manual panel ---
+        manual_panel = QWidget()
+        manual_layout = QVBoxLayout(manual_panel)
+        try:
+            manual_layout.setContentsMargins(6, 6, 6, 6)
+            manual_layout.setSpacing(6)
+        except Exception:
+            pass
+
+        manual_layout.addWidget(QLabel("<b>🧩 Informações disponíveis</b>"))
+
         self.column_search = QLineEdit()
         self.column_search.setPlaceholderText("Pesquisar informações...")
         self.column_search.setClearButtonEnabled(True)
         self.column_search.textChanged.connect(self.filter_columns)
-        center_layout.addWidget(self.column_search)
+        manual_layout.addWidget(self.column_search)
 
         self.columns_list = QListWidget()
         self.columns_list.setSelectionMode(QListWidget.MultiSelection)
-        center_layout.addWidget(self.columns_list)
-        # seleção rápida de colunas
-        col_btns = QHBoxLayout()
-        btn_select_all = QPushButton("✔️ Marcar todas")
-        btn_select_all.clicked.connect(self.select_all_columns)
-        col_btns.addWidget(btn_select_all)
-        btn_deselect_all = QPushButton("✖️ Desmarcar todas")
-        btn_deselect_all.clicked.connect(self.deselect_all_columns)
-        col_btns.addWidget(btn_deselect_all)
-        center_layout.addLayout(col_btns)
+        manual_layout.addWidget(self.columns_list)
 
-        btn_add_columns = QPushButton("➕ Adicionar informações")
-        btn_add_columns.clicked.connect(self.add_selected_columns)
-        center_layout.addWidget(btn_add_columns)
-        
+        col_btns = QHBoxLayout()
+        self.btn_select_all = QPushButton("✔️ Marcar todas")
+        self.btn_select_all.clicked.connect(self.select_all_columns)
+        col_btns.addWidget(self.btn_select_all)
+
+        self.btn_deselect_all = QPushButton("✖️ Desmarcar todas")
+        self.btn_deselect_all.clicked.connect(self.deselect_all_columns)
+        col_btns.addWidget(self.btn_deselect_all)
+        manual_layout.addLayout(col_btns)
+
+        self.btn_add_columns = QPushButton("➕ Adicionar informações")
+        self.btn_add_columns.clicked.connect(self.add_selected_columns)
+        manual_layout.addWidget(self.btn_add_columns)
+
+        manual_layout.addWidget(QLabel("<b>✅ Informações que aparecerão no relatório</b>"))
+        self.selected_columns_list = QListWidget()
+        manual_layout.addWidget(self.selected_columns_list)
+
+        btn_remove_column = QPushButton("➖ Remover informação")
+        btn_remove_column.clicked.connect(self.remove_selected_column)
+        manual_layout.addWidget(btn_remove_column)
+
+        manual_panel.setLayout(manual_layout)
+
+        # --- Pré-definida panel ---
+        predefined_panel = QWidget()
+        self.predefined_layout = QVBoxLayout(predefined_panel)
+        try:
+            self.predefined_layout.setContentsMargins(6, 6, 6, 6)
+            self.predefined_layout.setSpacing(6)
+        except Exception:
+            pass
+        predefined_panel.setLayout(self.predefined_layout)
+
+        # adiciona ambos ao centro (sem abas)
+        center_layout.addWidget(predefined_panel)
+        center_layout.addWidget(manual_panel)
+
+        # estado inicial: pré-definida visível
+        predefined_panel.setVisible(True)
+        manual_panel.setVisible(False)
+
+        # guarda referência para controle posterior
+        self._manual_panel = manual_panel
+        self._predefined_panel = predefined_panel
+
         center_panel.setLayout(center_layout)
         
         # === PAINEL DIREITO: Configurações e Execução ===
         right_panel = QWidget()
-        right_layout = QVBoxLayout()
+        right_layout = QVBoxLayout(right_panel)
+        try:
+            right_layout.setContentsMargins(6, 6, 6, 6)
+            
+            right_layout.setSpacing(6)
+        except Exception:
+            pass
 
         # Módulo / Agrupamento (Query Builder metadata)
         # Modo de consulta: metadados ou manual
         mode_layout = QHBoxLayout()
         mode_label = QLabel("Modo de consulta:")
         mode_layout.addWidget(mode_label)
-        self.mode_meta_radio = QRadioButton("Metadados")
+        self.mode_meta_radio = QRadioButton("Pré-definida")
         self.mode_manual_radio = QRadioButton("Manual")
         self.mode_meta_radio.setChecked(True)
         mode_layout.addWidget(self.mode_meta_radio)
@@ -457,7 +548,64 @@ class QueryBuilderTab(QWidget):
             mode_layout.addWidget(self.mode_help_btn)
         except Exception:
             pass
-        right_layout.addLayout(mode_layout)
+        # mover os controles de modo (Pré-definida / Manual) para o canto superior esquerdo
+        try:
+            # botão expansor do painel esquerdo (indica onde clicar para expandir/minimizar)
+            self.btn_expander = QToolButton()
+            self.btn_expander.setText('◀')
+            self.btn_expander.setToolTip('Expandir / Minimizar painel esquerdo')
+            try:
+                self.btn_expander.setFixedSize(22, 22)
+            except Exception:
+                pass
+            def _toggle_left_panel():
+                try:
+                    vis = left_panel.isVisible()
+                    left_panel.setVisible(not vis)
+                    # atualizar ícone/texto do botão
+                    try:
+                        self.btn_expander.setText('▶' if vis else '◀')
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            try:
+                self.btn_expander.clicked.connect(_toggle_left_panel)
+            except Exception:
+                pass
+
+            # Instead of inserting the expander inside the left panel (which
+            # hides it when the panel is hidden), place it in a small
+            # dedicated container that will be added to the splitter later.
+            try:
+                self.expander_container = QWidget()
+                try:
+                    exp_l = QVBoxLayout(self.expander_container)
+                    exp_l.setContentsMargins(2, 6, 2, 6)
+                    exp_l.setSpacing(0)
+                except Exception:
+                    exp_l = QVBoxLayout(self.expander_container)
+                try:
+                    exp_l.addWidget(self.btn_expander, alignment=Qt.AlignTop | Qt.AlignLeft)
+                except Exception:
+                    exp_l.addWidget(self.btn_expander)
+
+                # still insert the mode layout at the top of the left panel
+                try:
+                    left_layout.insertLayout(0, mode_layout)
+                except Exception:
+                    # fallback: keep on right panel
+                    right_layout.addLayout(mode_layout)
+            except Exception:
+                # fallback: original behavior (insert inside left panel)
+                try:
+                    left_layout.insertWidget(0, self.btn_expander, alignment=Qt.AlignLeft)
+                    left_layout.insertLayout(1, mode_layout)
+                except Exception:
+                    left_layout.insertLayout(0, mode_layout)
+        except Exception:
+            # fallback: manter no painel direito
+            right_layout.addLayout(mode_layout)
 
         # conecta sinais para alternar modo
         try:
@@ -469,55 +617,116 @@ class QueryBuilderTab(QWidget):
         except Exception:
             pass
 
-        right_layout.addWidget(QLabel("<b>🧭 Módulo / Agrupamento</b>"))
+        # adicionar o bloco de módulo/agrupamento no painel 'Pré-definida'
+        try:
+            self.predefined_layout.addWidget(QLabel("<b>🧭 Módulo / Agrupamento</b>"))
+        except Exception:
+            right_layout.addWidget(QLabel("<b>🧭 Módulo / Agrupamento</b>"))
         self.combo_modulo = QComboBox()
         self.combo_modulo.setToolTip("Selecione o módulo (ex.: financeiro, comercial)")
         # ensure combobox popup text is readable regardless of global styles
         try:
-            # ensure the popup list items remain readable on hover/selection
+            # Use stylesheet-only approach (no palette manipulation)
             self.combo_modulo.setStyleSheet(
-                "QComboBox { color: #000000; selection-background-color: #3874f2; }"
-                "QComboBox QAbstractItemView { color: #000000; background-color: #ffffff; selection-background-color: #3874f2; selection-color: #ffffff; }"
-                "QComboBox QAbstractItemView::item { padding: 2px 6px; }"
-                "QComboBox QAbstractItemView::item:selected { background: #3874f2; color: #ffffff; }"
-                "QComboBox QAbstractItemView::item:hover { background: #dce9ff; color: #000000; }"
-                "QListView { outline: 0; }"
+                """
+QComboBox {
+    color: #000000 !important;
+    background-color: #ffffff !important;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    selection-background-color: #3874f2 !important;
+    selection-color: #ffffff !important;
+}
+
+QComboBox QAbstractItemView::item {
+    padding: 4px 8px !important;
+    color: #000000 !important;
+}
+
+QComboBox QAbstractItemView::item:hover {
+    background-color: #dce9ff !important;
+    color: #000000 !important;
+    border-left: 3px solid #3874f2 !important;
+}
+
+QComboBox QAbstractItemView::item:selected {
+    background-color: #3874f2 !important;
+    color: #ffffff !important;
+}
+"""
             )
             try:
-                # also set the view palette to ensure native selection rendering uses our colors
+                # Also ensure the popup view uses the same stylesheet (avoid palette issues)
                 v = self.combo_modulo.view()
-                pal = v.palette()
-                pal.setColor(pal.Highlight, QColor('#3874f2'))
-                pal.setColor(pal.HighlightedText, QColor('#ffffff'))
-                v.setPalette(pal)
+                v.setStyleSheet("""
+QListView { background-color: #ffffff; color: #000000; }
+QListView::item { padding: 4px 8px; }
+QListView::item:hover { background-color: #dce9ff; color: #000000; border-left: 3px solid #3874f2; }
+QListView::item:selected { background-color: #3874f2; color: #ffffff; }
+""")
             except Exception:
                 pass
         except Exception:
             pass
-        right_layout.addWidget(self.combo_modulo)
+        try:
+            self.predefined_layout.addWidget(self.combo_modulo)
+        except Exception:
+            right_layout.addWidget(self.combo_modulo)
 
         self.combo_agrupamento = QComboBox()
         self.combo_agrupamento.setToolTip("Selecione o agrupamento dentro do módulo")
         try:
+            # Use stylesheet-only approach (no palette manipulation)
             self.combo_agrupamento.setStyleSheet(
-                "QComboBox { color: #000000; selection-background-color: #3874f2; }"
-                "QComboBox QAbstractItemView { color: #000000; background-color: #ffffff; selection-background-color: #3874f2; selection-color: #ffffff; }"
-                "QComboBox QAbstractItemView::item { padding: 2px 6px; }"
-                "QComboBox QAbstractItemView::item:selected { background: #3874f2; color: #ffffff; }"
-                "QComboBox QAbstractItemView::item:hover { background: #dce9ff; color: #000000; }"
-                "QListView { outline: 0; }"
+                """
+QComboBox {
+    color: #000000;
+    background-color: #ffffff;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    color: #000000;
+    selection-background-color: #3874f2;
+    selection-color: #ffffff;
+}
+
+QComboBox QAbstractItemView::item {
+    padding: 4px 8px;
+    color: #000000;
+}
+
+QComboBox QAbstractItemView::item:hover {
+    background-color: #dce9ff;
+    color: #000000;
+    border-left: 3px solid #3874f2;
+}
+
+QComboBox QAbstractItemView::item:selected {
+    background-color: #3874f2;
+    color: #ffffff;
+}
+"""
             )
             try:
                 v = self.combo_agrupamento.view()
-                pal = v.palette()
-                pal.setColor(pal.Highlight, QColor('#3874f2'))
-                pal.setColor(pal.HighlightedText, QColor('#ffffff'))
-                v.setPalette(pal)
+                v.setStyleSheet("""
+QListView { background-color: #ffffff; color: #000000; }
+QListView::item { padding: 4px 8px; }
+QListView::item:hover { background-color: #dce9ff; color: #000000; border-left: 3px solid #3874f2; }
+QListView::item:selected { background-color: #3874f2; color: #ffffff; }
+""")
             except Exception:
                 pass
         except Exception:
             pass
-        right_layout.addWidget(self.combo_agrupamento)
+        try:
+            self.predefined_layout.addWidget(self.combo_agrupamento)
+        except Exception:
+            right_layout.addWidget(self.combo_agrupamento)
 
         # conecta sinais para manter atributos e carregar agrupamentos
         try:
@@ -557,43 +766,72 @@ class QueryBuilderTab(QWidget):
         except Exception:
             pass
         
-        right_layout.addWidget(QLabel("<b>✅ Informações que aparecerão no relatório</b>"))
-        self.selected_columns_list = QListWidget()
-        right_layout.addWidget(self.selected_columns_list)
-        
-        btn_remove_column = QPushButton("➖ Remover informação")
-        btn_remove_column.clicked.connect(self.remove_selected_column)
-        right_layout.addWidget(btn_remove_column)
-
-        # Tipo de JOIN
-        right_layout.addWidget(QLabel("<b>🔗 Como os dados se relacionam</b>"))
-        self.join_type_combo = QComboBox()
-        self.join_type_combo.addItems(["INNER JOIN", "LEFT JOIN", "RIGHT JOIN"])
-        right_layout.addWidget(self.join_type_combo)
-
-        # Cláusula WHERE
-        right_layout.addWidget(QLabel("<b>🎯 Filtros (opcional)</b>"))
+    # Cláusula WHERE
+        # Adiciona a seção de filtros ao painel 'Pré-definida'
+        try:
+            self.predefined_layout.addWidget(QLabel("<b>🎯 Filtros</b>"))
+        except Exception:
+            right_layout.addWidget(QLabel("<b>🎯 Filtros</b>"))
         # Filtros rápidos (apenas no modo metadados)
         filters_box = QGroupBox("Filtros rápidos")
-        filters_layout = QHBoxLayout()
+        filters_layout = QVBoxLayout(filters_box)
+
         self.combo_filter_field = QComboBox()
-        self.combo_filter_field.setToolTip('Escolha o campo para filtrar (carregado do agrupamento)')
+        self.combo_filter_field.setToolTip(
+            'Escolha o campo para filtrar (carregado do agrupamento)'
+        )
+        self.combo_filter_field.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Fixed
+        )
+        filters_layout.addWidget(self.combo_filter_field)
+
+
+#        filters_box = QGroupBox("Filtros rápidos")
+#        filters_layout = QHBoxLayout()
+#        self.combo_filter_field = QComboBox()
+#        self.combo_filter_field.setToolTip('Escolha o campo para filtrar (carregado do agrupamento)')
         try:
             # dropdown must be readable even when hovered; force black text on items
             self.combo_filter_field.setStyleSheet(
-                "QComboBox { color: #000000; selection-background-color: #3874f2; }"
-                "QComboBox QAbstractItemView { color: #000000; background-color: #ffffff; selection-background-color: #3874f2; selection-color: #ffffff; }"
-                "QComboBox QAbstractItemView::item { padding: 2px 6px; }"
-                "QComboBox QAbstractItemView::item:selected { background: #3874f2; color: #ffffff; }"
-                "QComboBox QAbstractItemView::item:hover { background: #dce9ff; color: #000000; }"
-                "QListView { outline: 0; }"
+                """
+QComboBox {
+    color: #000000 !important;
+    background-color: #ffffff !important;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    selection-background-color: #3874f2 !important;
+    selection-color: #ffffff !important;
+}
+
+QComboBox QAbstractItemView::item {
+    padding: 4px 8px !important;
+    color: #000000 !important;
+}
+
+QComboBox QAbstractItemView::item:hover {
+    background-color: #dce9ff !important;
+    color: #000000 !important;
+    border-left: 3px solid #3874f2 !important;
+}
+
+QComboBox QAbstractItemView::item:selected {
+    background-color: #3874f2 !important;
+    color: #ffffff !important;
+}
+"""
             )
             try:
                 v = self.combo_filter_field.view()
-                pal = v.palette()
-                pal.setColor(pal.Highlight, QColor('#3874f2'))
-                pal.setColor(pal.HighlightedText, QColor('#ffffff'))
-                v.setPalette(pal)
+                v.setStyleSheet("""
+QListView { background-color: #ffffff; color: #000000; }
+QListView::item { padding: 4px 8px; }
+QListView::item:hover { background-color: #dce9ff; color: #000000; border-left: 3px solid #3874f2; }
+QListView::item:selected { background-color: #3874f2; color: #ffffff; }
+""")
             except Exception:
                 pass
         except Exception:
@@ -642,8 +880,6 @@ class QueryBuilderTab(QWidget):
             pass
         self.filter_date2.setVisible(False)
         filters_layout.addWidget(self.filter_date2)
-        self.filter_date2.setVisible(False)
-        filters_layout.addWidget(self.filter_date2)
 
         # 3) Numéricos (QDoubleSpinBox)
         self.filter_num1 = QDoubleSpinBox()
@@ -657,6 +893,11 @@ class QueryBuilderTab(QWidget):
         self.filter_num2.setDecimals(4)
         self.filter_num2.setVisible(False)
         filters_layout.addWidget(self.filter_num2)
+        # Connector selector (AND/OR) for panel-based filter creation
+        self.filter_connector_combo = QComboBox()
+        self.filter_connector_combo.addItems(["AND", "OR"])
+        self.filter_connector_combo.setFixedWidth(80)
+        filters_layout.addWidget(self.filter_connector_combo)
 
         self.btn_add_filter = QPushButton("Adicionar filtro")
         self.btn_add_filter.clicked.connect(self._on_add_filter_clicked)
@@ -671,62 +912,111 @@ class QueryBuilderTab(QWidget):
             pass
 
         filters_box.setLayout(filters_layout)
-        right_layout.addWidget(filters_box)
+        try:
+            self.predefined_layout.addWidget(filters_box)
+        except Exception:
+            right_layout.addWidget(filters_box)
 
         # Gerenciador de filtros parametrizados (lista + remover/limpar)
         manage_box = QGroupBox("Gerenciar filtros")
-        manage_layout = QVBoxLayout()
+        manage_layout = QVBoxLayout(manage_box)
+
         self.filters_list = QListWidget()
         self.filters_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.filters_list.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Expanding
+        )
         manage_layout.addWidget(self.filters_list)
 
-        fl_btn_layout = QHBoxLayout()
+        # === Botões em layout vertical (evita sobreposição em telas menores) ===
+        btn_layout = QVBoxLayout()
+
+        def _cfg_btn(btn):
+            btn.setMinimumHeight(34)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
         self.btn_remove_filter = QPushButton("➖ Remover filtro selecionado")
         self.btn_remove_filter.clicked.connect(self._remove_selected_filter)
-        self.btn_remove_filter.setMinimumWidth(140)
-        fl_btn_layout.addWidget(self.btn_remove_filter)
+        _cfg_btn(self.btn_remove_filter)
+        btn_layout.addWidget(self.btn_remove_filter)
 
         self.btn_clear_filters = QPushButton("🧹 Limpar filtros")
         self.btn_clear_filters.clicked.connect(self._clear_param_filters)
-        self.btn_clear_filters.setMinimumWidth(120)
-        fl_btn_layout.addWidget(self.btn_clear_filters)
+        _cfg_btn(self.btn_clear_filters)
+        btn_layout.addWidget(self.btn_clear_filters)
 
         # botão editar filtro
         self.btn_edit_filter = QPushButton("✏️ Editar filtro")
         self.btn_edit_filter.clicked.connect(self._edit_selected_filter)
-        self.btn_edit_filter.setMinimumWidth(120)
-        fl_btn_layout.addWidget(self.btn_edit_filter)
+        _cfg_btn(self.btn_edit_filter)
+        btn_layout.addWidget(self.btn_edit_filter)
 
         # botão desfazer (restaura where_input anterior à sincronização)
         self.btn_undo_where = QPushButton("↶ Desfazer WHERE")
         self.btn_undo_where.setEnabled(False)
         self.btn_undo_where.clicked.connect(self._undo_last_where)
-        self.btn_undo_where.setMinimumWidth(120)
-        fl_btn_layout.addWidget(self.btn_undo_where)
-        # redo button
+        _cfg_btn(self.btn_undo_where)
+        btn_layout.addWidget(self.btn_undo_where)
+
+        # botão refazer
         self.btn_redo_where = QPushButton("↷ Refazer WHERE")
         self.btn_redo_where.setEnabled(False)
         self.btn_redo_where.clicked.connect(self._redo_last_where)
-        self.btn_redo_where.setMinimumWidth(120)
-        fl_btn_layout.addWidget(self.btn_redo_where)
+        _cfg_btn(self.btn_redo_where)
+        btn_layout.addWidget(self.btn_redo_where)
 
-        manage_layout.addLayout(fl_btn_layout)
+        manage_layout.addLayout(btn_layout)
+
 
         # WHERE input (mover para dentro do grupo Gerenciar filtros para evitar duplicação)
         self.where_input = QTextEdit()
         self.where_input.setPlaceholderText("Ex: DataVenda >= '2024-01-01'")
         self.where_input.setMaximumHeight(100)
-        manage_layout.addWidget(self.where_input)
+        # NOTE: we keep `where_input` as an internal buffer but do NOT add it to the
+        # layout -- all filters (manual or metadados) should appear only in the
+        # `self.filters_list` (Gerenciar filtros). Hiding the widget prevents the
+        # duplicate field below the buttons while preserving existing code that
+        # reads/writes `self.where_input` internally.
+        try:
+            self.where_input.setVisible(False)
+        except Exception:
+            pass
 
         manage_box.setLayout(manage_layout)
-        right_layout.addWidget(manage_box)
+        try:
+            self.predefined_layout.addWidget(manage_box)
+        except Exception:
+            right_layout.addWidget(manage_box)
 
-        # SQL Gerada
-        right_layout.addWidget(QLabel("<b>🧠 Consulta criada automaticamente</b>"))
-        self.sql_preview = QTextEdit()
-        self.sql_preview.setReadOnly(True)
-        self.sql_preview.setMaximumHeight(150)
-        right_layout.addWidget(self.sql_preview)
+        # SQL Gerada - colocar abaixo do gerenciador de filtros (manage_box)
+        try:
+            self.predefined_layout.addWidget(QLabel("<b>🧠 Consulta criada automaticamente</b>"))
+            self.sql_preview = QTextEdit()
+            self.sql_preview.setReadOnly(True)
+            self.sql_preview.setMaximumHeight(150)
+            self.predefined_layout.addWidget(self.sql_preview)
+        except Exception:
+            # fallback para painel direito (se predefined_layout não aceitar)
+            right_layout.addWidget(QLabel("<b>🧠 Consulta criada automaticamente</b>"))
+            self.sql_preview = QTextEdit()
+            self.sql_preview.setReadOnly(True)
+            self.sql_preview.setMaximumHeight(150)
+            right_layout.addWidget(self.sql_preview)
+
+        # badge que aparece quando a SQL for regenerada automaticamente
+        try:
+            self.auto_update_badge = QLabel("Atualizada")
+            self.auto_update_badge.setVisible(False)
+            self.auto_update_badge.setStyleSheet(
+                "background:#ffd54f; color:#333; padding:4px 8px; border-radius:10px; font-size:11px;"
+            )
+            try:
+                self.predefined_layout.addWidget(self.auto_update_badge)
+            except Exception:
+                right_layout.addWidget(self.auto_update_badge)
+        except Exception:
+            self.auto_update_badge = None
 
         # Botões de ação
         action_layout = QVBoxLayout()
@@ -789,8 +1079,12 @@ class QueryBuilderTab(QWidget):
         # === SPLITTER PARA REDIMENSIONAMENTO ===
         # painel de ações (botões verticais à direita)
         actions_panel = QWidget()
-        actions_layout = QVBoxLayout()
-        actions_layout.setContentsMargins(6,6,6,6)
+        actions_layout = QVBoxLayout(actions_panel)
+        try:
+            actions_layout.setContentsMargins(6,6,6,6)
+            actions_layout.setSpacing(8)
+        except Exception:
+            pass
         # transferir os botões criados acima para este layout (eles já existem)
         try:
             actions_layout.addWidget(btn_generate)
@@ -845,14 +1139,29 @@ class QueryBuilderTab(QWidget):
             pass
 
         splitter = QSplitter(Qt.Horizontal)
+        # add the expander container first so the expander remains visible
+        # even when the left_panel is hidden
+        try:
+            splitter.addWidget(self.expander_container)
+        except Exception:
+            # if expander_container wasn't created for some reason, fall back
+            # to adding a tiny spacer widget so layout remains stable
+            try:
+                spacer = QWidget()
+                spacer.setFixedWidth(28)
+                splitter.addWidget(spacer)
+            except Exception:
+                pass
         splitter.addWidget(left_panel)
         splitter.addWidget(center_panel)
         splitter.addWidget(right_panel)
         splitter.addWidget(actions_panel)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
+        # stretch factors: expander(0) - left(1) - center(2) - right(2) - actions(0)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 2)
-        splitter.setStretchFactor(3, 0)
+        splitter.setStretchFactor(3, 2)
+        splitter.setStretchFactor(4, 0)
         
         layout.addWidget(splitter)
         self.setLayout(layout)
@@ -1033,10 +1342,31 @@ class QueryBuilderTab(QWidget):
         for item in selected_items:
             raw = item.data(Qt.UserRole) or item.text()
             if raw not in existing_raw:
+                # se já existe ao menos uma tabela, solicitar tipo de JOIN ao usuário
+                join_type = None
+                try:
+                    if self.selected_tables_list.count() >= 1:
+                        from PyQt5.QtWidgets import QInputDialog
+                        options = ["INNER JOIN", "LEFT JOIN", "RIGHT JOIN"]
+                        choice, ok = QInputDialog.getItem(self, "Tipo de relacionamento", f"Escolha o tipo de JOIN para {raw}:", options, 0, False)
+                        if not ok:
+                            # usuário cancelou escolha -> pular esta tabela
+                            continue
+                        join_type = choice
+                except Exception:
+                    join_type = None
+
                 idx = self.selected_tables_list.count() + 1
                 display = f"{idx}: {raw}"
+                if join_type:
+                    display = f"{idx}: {raw} [{join_type}]"
                 li = QListWidgetItem(display)
                 li.setData(Qt.UserRole, raw)
+                # armazenar join_type em role adicional
+                try:
+                    li.setData(Qt.UserRole + 1, join_type)
+                except Exception:
+                    pass
                 self.selected_tables_list.addItem(li)
                 existing_raw.append(raw)
         # renumerar para garantir sequência correta
@@ -1193,6 +1523,11 @@ class QueryBuilderTab(QWidget):
         for idx in range(self.selected_tables_list.count()):
             item = self.selected_tables_list.item(idx)
             raw = item.data(Qt.UserRole) or self._get_selected_table_raw_text(item)
+            # join type may be stored in UserRole+1
+            try:
+                join_type = item.data(Qt.UserRole + 1)
+            except Exception:
+                join_type = None
             # tenta extrair chave schema.table para buscar nome amigável
             try:
                 parts = raw.split('.')
@@ -1204,6 +1539,8 @@ class QueryBuilderTab(QWidget):
             friendly = self._table_name_map.get(key) if key else None
             display_body = f"{friendly} — {raw}" if friendly else raw
             display = f"{idx+1}: {display_body}"
+            if join_type:
+                display = f"{display} [{join_type}]"
             item.setText(display)
             item.setData(Qt.UserRole, raw)
 
@@ -1223,7 +1560,20 @@ class QueryBuilderTab(QWidget):
                 self.selected_tables_list.takeItem(found_index)
                 self._renumber_selected_tables()
             else:
-                # adiciona ao final
+                # adiciona ao final; se já houver tabela, solicitar tipo de JOIN
+                join_type = None
+                try:
+                    if self.selected_tables_list.count() >= 1:
+                        from PyQt5.QtWidgets import QInputDialog
+                        options = ["INNER JOIN", "LEFT JOIN", "RIGHT JOIN"]
+                        choice, ok = QInputDialog.getItem(self, "Tipo de relacionamento", f"Escolha o tipo de JOIN para {raw}:", options, 0, False)
+                        if not ok:
+                            # usuário cancelou -> não adicionar
+                            return
+                        join_type = choice
+                except Exception:
+                    join_type = None
+
                 idx = self.selected_tables_list.count() + 1
                 # apresenta nome amigável se existir
                 try:
@@ -1236,8 +1586,14 @@ class QueryBuilderTab(QWidget):
                 friendly = self._table_name_map.get(key) if key else None
                 display_body = f"{friendly} — {raw}" if friendly else raw
                 display = f"{idx}: {display_body}"
+                if join_type:
+                    display = f"{display} [{join_type}]"
                 li = QListWidgetItem(display)
                 li.setData(Qt.UserRole, raw)
+                try:
+                    li.setData(Qt.UserRole + 1, join_type)
+                except Exception:
+                    pass
                 self.selected_tables_list.addItem(li)
             self.update_available_columns()
         except Exception as e:
@@ -1780,22 +2136,34 @@ class QueryBuilderTab(QWidget):
                         v = f"'{v1}'"
                     expr = f"{field_ref} {op} {v}"
 
-                # insere no where_input usando conector selecionado
-                connector = connector_combo.currentText()
-                # append the new expression at the end (safer than inserting at cursor)
-                current = self.where_input.toPlainText().strip()
-                if not current:
-                    # first expression: insert as-is
-                    self.where_input.setPlainText(expr)
-                else:
-                    # if existing text already ends with a connector (AND/OR), don't add another
-                    import re
-                    if re.search(r"\b(and|or)\s*$", current, re.IGNORECASE):
-                        new_text = current + ' ' + expr
-                    else:
-                        new_text = current + f' {connector} ' + expr
-                    self.where_input.setPlainText(new_text)
-                self.where_input.setFocus()
+                # Instead of inserting into the (now-hidden) where_input field,
+                # add the expression to the parametrized filters list so it
+                # appears under "Gerenciar filtros" together with metadados
+                # filters. We don't currently preserve the per-item connector
+                # chosen in the dialog; filters are combined with AND when
+                # previewed/executed.
+                try:
+                    if not hasattr(self, '_param_filters') or self._param_filters is None:
+                        self._param_filters = []
+                    # store as (expr, params, meta, connector)
+                    connector = connector_combo.currentText() if 'connector_combo' in locals() else 'AND'
+                    self._param_filters.append((expr, [], None, connector))
+                except Exception:
+                    pass
+                try:
+                    self._refresh_filters_list()
+                    # focus and select the newly added item so user sees it immediately
+                    try:
+                        self.filters_list.setFocus()
+                        last_row = max(0, self.filters_list.count() - 1)
+                        self.filters_list.setCurrentRow(last_row)
+                        item = self.filters_list.currentItem()
+                        if item:
+                            self.filters_list.scrollToItem(item)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
             else:
                 # cancelado
                 return
@@ -2322,28 +2690,146 @@ class QueryBuilderTab(QWidget):
         automáticos, aliases, etc.) expanda conforme necessidade.
         """
         try:
+
             # Coleta colunas selecionadas
             cols = [self.selected_columns_list.item(i).text() for i in range(self.selected_columns_list.count())]
-            if not cols:
-                select_clause = '*'
-            else:
-                # Se o usuário escolheu colunas no formato 'table.col (type)', tenta extrair apenas 'table.col'
-                cleaned = []
-                for c in cols:
-                    m = re.match(r"^([^\(]+)\s*(?:\(.*\))?$", c)
-                    cleaned.append(m.group(1).strip() if m else c)
-                select_clause = ', '.join(cleaned)
 
-            # Coleta tabelas
-            tables = [self._get_selected_table_raw_text(self.selected_tables_list.item(i)) for i in range(self.selected_tables_list.count())]
-            if not tables:
+            # Coleta tabelas selecionadas (raw como '[schema].TableName')
+            tables_raw = [self._get_selected_table_raw_text(self.selected_tables_list.item(i)) for i in range(self.selected_tables_list.count())]
+            if not tables_raw:
                 QMessageBox.warning(self, "Aviso", "Selecione ao menos uma fonte (tabela) para o modo manual")
                 return
 
-            from_clause = ', '.join(tables)
+            # Compute aliases for selected tables and build FROM clause with aliases
+            aliases = self._compute_aliases_for_selected_tables()
 
-            # Where (opcional)
-            where_clause = self.where_input.toPlainText().strip()
+            from_parts = []
+            # also build a small lookup for table names -> (schema, table)
+            selected_tables = []
+            for t in tables_raw:
+                parts = t.split('.')
+                schema = parts[0].strip('[]')
+                table_name = parts[1].split('(')[0].strip()
+                alias = aliases.get((schema, table_name))
+                selected_tables.append((schema, table_name))
+                if alias:
+                    from_parts.append(f"[{schema}].[{table_name}] AS {alias}")
+                else:
+                    from_parts.append(f"[{schema}].[{table_name}]")
+            from_clause = ', '.join(from_parts)
+
+            # Helper para resolver um campo (ex: 'table.col' ou '[schema].[table].[col]') para usar alias
+            def _resolve_field_to_alias(field_text: str):
+                # tenta formatos: [schema].[table].[col], schema.table.col, table.col
+                try:
+                    # remove espaços desnecessários
+                    ft = field_text.strip()
+                    # bracketed parts
+                    m = re.match(r"^(?:\[?([A-Za-z0-9_]+)\]?\.)?(?:\[?([A-Za-z0-9_]+)\]?\.)?\[?([A-Za-z0-9_]+)\]?$")
+                    if m:
+                        # groups: maybe schema, maybe table, column
+                        g1 = m.group(1)
+                        g2 = m.group(2)
+                        g3 = m.group(3)
+                        if g2 and g1:
+                            # schema.table.col
+                            schema = g1; table_name = g2; col = g3
+                        elif g2 and not g1:
+                            # table.col (captured as g2=table, g3=col)
+                            table_name = g2; col = g3; schema = None
+                        else:
+                            # only col? fallback
+                            return field_text
+                        # try to find alias for (schema,table) or by table only
+                        alias = None
+                        if schema:
+                            alias = aliases.get((schema, table_name))
+                        if not alias:
+                            # search by table name only among selected tables
+                            for s, tname in selected_tables:
+                                if tname.lower() == table_name.lower():
+                                    alias = aliases.get((s, tname))
+                                    break
+                        if alias:
+                            return f"{alias}.[{col}]"
+                        else:
+                            # return fully qualified if schema known
+                            if schema:
+                                return f"[{schema}].[{table_name}].[{col}]"
+                            else:
+                                return f"[{table_name}].[{col}]"
+                except Exception:
+                    pass
+                return field_text
+
+            # Build select clause: if user selected columns, try to use aliases for them
+            if not cols:
+                select_clause = '*'
+            else:
+                cleaned = []
+                for c in cols:
+                    m = re.match(r"^([^\(]+)\s*(?:\(.*\))?$", c)
+                    raw_field = m.group(1).strip() if m else c
+                    # raw_field expected like 'table.col' or 'schema.table.col'
+                    cleaned.append(_resolve_field_to_alias(raw_field))
+                select_clause = ', '.join(cleaned)
+
+            # Where (opcional) - prefer filtros parametrizados
+            where_clause = ''
+            if getattr(self, '_param_filters', None):
+                try:
+                    preview_items = []
+                    for f in (self._param_filters or []):
+                        try:
+                            if isinstance(f, (list, tuple)):
+                                expr = f[0] if len(f) >= 1 else str(f)
+                                conn = f[3] if len(f) >= 4 else 'AND'
+                            elif isinstance(f, dict):
+                                expr = f.get('expr')
+                                conn = f.get('connector', 'AND')
+                            else:
+                                expr = str(f); conn = 'AND'
+                            # replace qualified field references with aliases
+                            try:
+                                # for each selected table, replace occurrences
+                                new_expr = expr
+                                for (schema, table_name), alias in aliases.items():
+                                    if not alias:
+                                        continue
+                                    # pattern for [schema].[table].[col]
+                                    pat1 = re.compile(rf"\[?{re.escape(schema)}\]?\s*\.\s*\[?{re.escape(table_name)}\]?\s*\.\s*\[?([A-Za-z0-9_]+)\]?", re.IGNORECASE)
+                                    new_expr = pat1.sub(lambda m: f"{alias}.[{m.group(1)}]", new_expr)
+                                    # pattern for table.col (no schema)
+                                    pat2 = re.compile(rf"\b{re.escape(table_name)}\s*\.\s*([A-Za-z0-9_]+)\b", re.IGNORECASE)
+                                    new_expr = pat2.sub(lambda m: f"{alias}.[{m.group(1)}]", new_expr)
+                                expr = new_expr
+                            except Exception:
+                                pass
+                            preview_items.append((expr, conn))
+                        except Exception:
+                            continue
+                    if preview_items:
+                        first_expr = preview_items[0][0]
+                        w = first_expr
+                        for expr, conn in preview_items[1:]:
+                            w = f"{w} {conn} {expr}"
+                        where_clause = w
+                    else:
+                        where_clause = ''
+                except Exception:
+                    try:
+                        parts = []
+                        for f in (self._param_filters or []):
+                            if isinstance(f, (list, tuple)) and len(f) >= 1:
+                                parts.append(f[0])
+                            else:
+                                parts.append(str(f))
+                        where_clause = ' AND '.join(parts).strip()
+                    except Exception:
+                        where_clause = ''
+            else:
+                where_clause = self.where_input.toPlainText().strip()
+
             sql = f"SELECT {select_clause} FROM {from_clause}"
             if where_clause:
                 sql += f" WHERE {where_clause}"
@@ -2372,6 +2858,52 @@ class QueryBuilderTab(QWidget):
         try:
             if hasattr(self, 'combo_modulo') and self.combo_modulo is not None:
                 self.current_modulo = self.combo_modulo.itemData(index)
+        except Exception:
+            pass
+
+    def _flash_auto_update_badge(self):
+        """Exibe o badge `auto_update_badge` com uma animação de fade in/out."""
+        if not getattr(self, 'auto_update_badge', None):
+            try:
+                self.statusBar().showMessage('SQL atualizada automaticamente', 1500)
+            except Exception:
+                pass
+            return
+        try:
+            badge = self.auto_update_badge
+            badge.setVisible(True)
+            effect = QGraphicsOpacityEffect(badge)
+            badge.setGraphicsEffect(effect)
+            anim_in = QPropertyAnimation(effect, b"opacity")
+            anim_in.setDuration(250)
+            anim_in.setStartValue(0.0)
+            anim_in.setEndValue(1.0)
+            # Keep reference to avoid GC
+            self._badge_anim = anim_in
+            anim_in.start()
+
+            def _do_fade_out():
+                try:
+                    anim_out = QPropertyAnimation(effect, b"opacity")
+                    anim_out.setDuration(400)
+                    anim_out.setStartValue(1.0)
+                    anim_out.setEndValue(0.0)
+                    self._badge_anim = anim_out
+                    anim_out.start()
+                    QTimer.singleShot(410, lambda: badge.setVisible(False))
+                except Exception:
+                    try:
+                        badge.setVisible(False)
+                    except Exception:
+                        pass
+
+            # keep the badge visible for ~900ms before fading out
+            QTimer.singleShot(900, _do_fade_out)
+        except Exception:
+            try:
+                self.statusBar().showMessage('SQL atualizada automaticamente', 1500)
+            except Exception:
+                pass
             else:
                 # fallback: tenta ler item text se itemData não estiver disponível
                 if hasattr(self, 'combo_modulo') and self.combo_modulo is not None:
@@ -3102,7 +3634,12 @@ class QueryBuilderTab(QWidget):
             # adiciona à lista parametrizada
             try:
                 # store meta together to allow editing/changing field later
-                self._param_filters.append((param_expr, params, data))
+                # connector selected in the panel (AND/OR)
+                try:
+                    conn = self.filter_connector_combo.currentText() if getattr(self, 'filter_connector_combo', None) else 'AND'
+                except Exception:
+                    conn = 'AND'
+                self._param_filters.append((param_expr, params, data, conn))
             except Exception:
                 pass
 
@@ -3112,32 +3649,7 @@ class QueryBuilderTab(QWidget):
             except Exception:
                 pass
 
-            # insere preview textual no where_input para ajudar o usuário
-            try:
-                # monta representação legível com valores embutidos para preview
-                def preview_quote(val, t):
-                    if t == 'numeric':
-                        return str(val)
-                    return f"'{val}'"
-
-                if params:
-                    if op == 'BETWEEN':
-                        pv = f"{field_expr} BETWEEN {preview_quote(params[0], ftype)} AND {preview_quote(params[1], ftype)}"
-                    elif op == 'IN':
-                        pv = f"{field_expr} IN ({', '.join(preview_quote(p, ftype) for p in params)})"
-                    else:
-                        pv = f"{field_expr} {op} {preview_quote(params[0], ftype)}"
-                else:
-                    pv = param_expr
-
-                current = self.where_input.toPlainText().strip()
-                if not current:
-                    new_text = pv
-                else:
-                    new_text = current + ' AND ' + pv
-                self.where_input.setPlainText(new_text)
-            except Exception:
-                pass
+            # preview textual no WHERE já é atualizado por _refresh_filters_list()
 
             # log
             try:
@@ -3187,29 +3699,89 @@ class QueryBuilderTab(QWidget):
                 prev_where = ''
 
             self.filters_list.clear()
+            # (Removido: não mantemos mais a lista separada de "filtros incluídos")
             previews = []
             for item in (self._param_filters or []):
                 # suportar formatos antigos e novos
-                expr = None; params = None; meta = None
+                expr = None; params = None; meta = None; connector = 'AND'
                 try:
                     if isinstance(item, (list, tuple)):
                         if len(item) >= 2:
                             expr = item[0]; params = item[1]
                         if len(item) >= 3:
                             meta = item[2]
+                        if len(item) >= 4:
+                            try:
+                                connector = item[3]
+                            except Exception:
+                                connector = 'AND'
                     elif isinstance(item, dict):
                         expr = item.get('expr'); params = item.get('params'); meta = item.get('meta')
+                        connector = item.get('connector', 'AND')
                 except Exception:
                     continue
                 pv = self._format_param_filter_preview(expr, params)
                 it = QListWidgetItem(pv)
-                # armazenar a tupla (expr, params, meta) no UserRole
-                it.setData(Qt.UserRole, (expr, params, meta))
+                # armazenar a tupla (expr, params, meta, connector) no UserRole
+                it.setData(Qt.UserRole, (expr, params, meta, connector))
                 self.filters_list.addItem(it)
-                previews.append(pv)
+                # tentar criar widget customizado (combo de conector + texto)
+                try:
+                    container = QWidget()
+                    h = QHBoxLayout(container)
+                    h.setContentsMargins(6, 2, 6, 2)
+                    # embed a small combo to allow editing the connector per-item
+                    conn_combo = QComboBox()
+                    conn_combo.addItems(["AND", "OR"])
+                    try:
+                        conn_combo.setCurrentText(str(connector).strip().upper())
+                    except Exception:
+                        try:
+                            conn_combo.setCurrentText('AND')
+                        except Exception:
+                            pass
+                    conn_combo.setFixedWidth(64)
+                    # style the combo a bit for visibility
+                    conn_combo.setStyleSheet('padding:2px; border-radius:6px;')
+                    expr_lbl = QLabel(pv)
+                    expr_lbl.setWordWrap(True)
+                    expr_lbl.setTextInteractionFlags(expr_lbl.textInteractionFlags() | Qt.TextSelectableByMouse)
+                    # NOTE: removemos o widget de seleção do conector da lista "Gerenciar filtros"
+                    # para simplificar a UI conforme solicitado. O conector continua sendo
+                    # armazenado em Qt.UserRole para uso na geração da SQL, mas não é
+                    # exibido nem editável diretamente nesta lista.
+                    h.addWidget(expr_lbl)
+                    h.addStretch()
+                    self.filters_list.setItemWidget(it, container)
+                    # (Removido) não conectamos mais signals para edição do conector aqui.
+                except Exception:
+                    # fallback: item de texto simples
+                    pass
+                previews.append((pv, connector))
+                # (Removido: anteriormente adicionávamos também na lista central de
+                # filtros incluídos. Agora todo filtro vai para o gerenciador de
+                # filtros (`self.filters_list`) e não mantemos essa visualização
+                # duplicada.)
 
             # sincroniza WHERE sempre com os filtros parametrizados
-            new_where = ' AND '.join(previews) if previews else ''
+            # monta where respeitando conectores por filtro (armazenados como 4a posição)
+            new_where = ''
+            try:
+                if previews:
+                    # previews is list of (pv, connector)
+                    first = previews[0][0]
+                    parts = [first]
+                    for pv, conn in previews[1:]:
+                        parts.append(f" {conn} {pv}")
+                    new_where = ''.join(parts)
+                else:
+                    new_where = ''
+            except Exception:
+                # fallback para compatibilidade: juntar com AND
+                try:
+                    new_where = ' AND '.join(p[0] if isinstance(p, tuple) else str(p) for p in previews)
+                except Exception:
+                    new_where = ''
             # se houve alteração efetiva no WHERE, guarda no histórico para permitir múltiplos undo
             if new_where != prev_where:
                 try:
@@ -3237,6 +3809,36 @@ class QueryBuilderTab(QWidget):
                 pass
             try:
                 self.where_input.setPlainText(new_where)
+            except Exception:
+                pass
+            # If we're in manual mode, regenerate the manual SQL preview so
+            # the newly added filters are reflected immediately without
+            # requiring the user to click 'Gerar SQL'. This keeps behavior
+            # intuitive when users add filters via context menu.
+            try:
+                if getattr(self, 'modo_consulta', 'metadados') == 'manual':
+                    # regenerate manual SQL preview and current_sql
+                    try:
+                        self.generate_sql_manual()
+                        # show a small badge with fade animation to indicate automatic regeneration
+                        try:
+                            try:
+                                if getattr(self, '_flash_auto_update_badge', None):
+                                    # call method if present
+                                    self._flash_auto_update_badge()
+                                else:
+                                    # fallback behavior
+                                    if getattr(self, 'auto_update_badge', None):
+                                        self.auto_update_badge.setVisible(True)
+                                        QTimer.singleShot(1500, lambda: self.auto_update_badge.setVisible(False))
+                                    else:
+                                        self.statusBar().showMessage('SQL atualizada automaticamente', 1500)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
             except Exception:
                 pass
         except Exception as e:
@@ -3746,7 +4348,17 @@ class QueryBuilderTab(QWidget):
                     QMessageBox.warning(dlg, 'Aviso', 'Não foi possível localizar o filtro selecionado.')
                     return
                 try:
-                    self._param_filters[idx] = (param_expr, new_params)
+                    # preserve existing meta/connector if present
+                    old = self._param_filters[idx]
+                    try:
+                        old_meta = old[2] if len(old) >= 3 else None
+                    except Exception:
+                        old_meta = None
+                    try:
+                        old_conn = old[3] if len(old) >= 4 else (old.get('connector') if isinstance(old, dict) else 'AND')
+                    except Exception:
+                        old_conn = 'AND'
+                    self._param_filters[idx] = (param_expr, new_params, old_meta, old_conn)
                 except Exception as e:
                     QMessageBox.critical(dlg, 'Erro', f'Falha ao salvar filtro: {e}')
                     return
@@ -3861,7 +4473,21 @@ class QueryBuilderTab(QWidget):
             mode = mode if mode in ('metadados', 'manual') else 'metadados'
             self.modo_consulta = mode
             is_meta = (mode == 'metadados')
-            # módulos/agrupamentos só relevantes em metadados
+
+            # =========================
+            # 🔁 CONTROLE DE VISIBILIDADE DOS PAINÉIS
+            # =========================
+            try:
+                if hasattr(self, '_predefined_panel'):
+                    self._predefined_panel.setVisible(is_meta)
+                if hasattr(self, '_manual_panel'):
+                    self._manual_panel.setVisible(not is_meta)
+            except Exception:
+                pass
+
+            # =========================
+            # módulos/agrupamentos (somente metadados)
+            # =========================
             try:
                 if hasattr(self, 'combo_modulo') and self.combo_modulo is not None:
                     self.combo_modulo.setEnabled(is_meta)
@@ -3870,16 +4496,40 @@ class QueryBuilderTab(QWidget):
             except Exception:
                 pass
 
-            # controles de seleção manual (tabelas/colunas)
+            # =========================
+            # controles da consulta manual
+            # =========================
             try:
                 self.tables_list.setEnabled(not is_meta)
                 self.columns_list.setEnabled(not is_meta)
                 self.selected_tables_list.setEnabled(not is_meta)
                 self.selected_columns_list.setEnabled(not is_meta)
+
+                try:
+                    if hasattr(self, 'btn_remove_table'):
+                        self.btn_remove_table.setEnabled(not is_meta)
+                    if hasattr(self, 'btn_clear_tables'):
+                        self.btn_clear_tables.setEnabled(not is_meta)
+                    if hasattr(self, 'btn_add_tables'):
+                        self.btn_add_tables.setEnabled(not is_meta)
+                    if hasattr(self, 'btn_select_all'):
+                        self.btn_select_all.setEnabled(not is_meta)
+                    if hasattr(self, 'btn_deselect_all'):
+                        self.btn_deselect_all.setEnabled(not is_meta)
+                    if hasattr(self, 'btn_add_columns'):
+                        self.btn_add_columns.setEnabled(not is_meta)
+                    if hasattr(self, 'table_search'):
+                        self.table_search.setEnabled(not is_meta)
+                    if hasattr(self, 'column_search'):
+                        self.column_search.setEnabled(not is_meta)
+                except Exception:
+                    pass
             except Exception:
                 pass
 
-            # atualizar estado dos rádios (caso chamada programática)
+            # =========================
+            # sincroniza estado dos rádios (chamada programática)
+            # =========================
             try:
                 if hasattr(self, 'mode_meta_radio'):
                     self.mode_meta_radio.setChecked(is_meta)
@@ -3888,7 +4538,9 @@ class QueryBuilderTab(QWidget):
             except Exception:
                 pass
 
-            # Atualiza hint visual e destaca controles relevantes
+            # =========================
+            # hint visual de modo
+            # =========================
             try:
                 if hasattr(self, 'mode_hint_label'):
                     if is_meta:
@@ -3897,58 +4549,95 @@ class QueryBuilderTab(QWidget):
                     else:
                         self.mode_hint_label.setText('Modo: Manual — selecione tabelas/colunas')
                         self.mode_hint_label.setStyleSheet('color: #f39c12; font-weight: bold;')
-
-                # destaque leve nos controles associados
-                    try:
-                        # stronger visual highlight: border and background
-                        border_color = '#1abc9c' if is_meta else '#f39c12'
-                        border_style = f'2px solid {border_color}'
-
-                        if hasattr(self, 'combo_modulo') and self.combo_modulo is not None:
-                            self.combo_modulo.setStyleSheet('background-color: #ffffff;' if is_meta else 'background-color: #f0f0f0;')
-                        if hasattr(self, 'combo_agrupamento') and self.combo_agrupamento is not None:
-                            self.combo_agrupamento.setStyleSheet('background-color: #ffffff;' if is_meta else 'background-color: #f0f0f0;')
-
-                        tbl_bg = '#ffffff' if not is_meta else '#f8f9fa'
-                        col_bg = '#ffffff' if not is_meta else '#f8f9fa'
-                        if hasattr(self, 'tables_list') and self.tables_list is not None:
-                            self.tables_list.setStyleSheet(f'background-color: {tbl_bg};')
-                        if hasattr(self, 'columns_list') and self.columns_list is not None:
-                            self.columns_list.setStyleSheet(f'background-color: {col_bg};')
-                        if hasattr(self, 'selected_tables_list') and self.selected_tables_list is not None:
-                            self.selected_tables_list.setStyleSheet(f'background-color: {col_bg};')
-                        if hasattr(self, 'selected_columns_list') and self.selected_columns_list is not None:
-                            self.selected_columns_list.setStyleSheet(f'background-color: {col_bg};')
-
-                        # Apply temporary pulsing border to highlighted controls
-                        def apply_pulse(widget):
-                            try:
-                                if widget is None:
-                                    return
-                                original = widget.styleSheet() or ''
-                                widget.setStyleSheet(original + f'; border: {border_style};')
-                                # after 400ms switch to lighter border
-                                QTimer.singleShot(400, lambda: widget.setStyleSheet(original + f'; border: 1px solid {border_color};'))
-                                # after 1400ms restore original (remove border)
-                                QTimer.singleShot(1400, lambda: widget.setStyleSheet(original))
-                            except Exception:
-                                pass
-
-                        # choose which widgets to pulse based on mode
-                        if is_meta:
-                            apply_pulse(getattr(self, 'combo_modulo', None))
-                            apply_pulse(getattr(self, 'combo_agrupamento', None))
-                        else:
-                            apply_pulse(getattr(self, 'tables_list', None))
-                            apply_pulse(getattr(self, 'columns_list', None))
-                            apply_pulse(getattr(self, 'selected_tables_list', None))
-                            apply_pulse(getattr(self, 'selected_columns_list', None))
-                    except Exception:
-                        pass
             except Exception:
                 pass
+
+            # =========================
+            # destaque visual (pulse)
+            # =========================
+            try:
+                border_color = '#1abc9c' if is_meta else '#f39c12'
+                border_style = f'2px solid {border_color}'
+
+                def apply_pulse(widget):
+                    try:
+                        if widget is None:
+                            return
+                        original = widget.styleSheet() or ''
+                        widget.setStyleSheet(original + f'; border: {border_style};')
+                        QTimer.singleShot(
+                            400,
+                            lambda: widget.setStyleSheet(original + f'; border: 1px solid {border_color};')
+                        )
+                        QTimer.singleShot(1400, lambda: widget.setStyleSheet(original))
+                    except Exception:
+                        pass
+
+                if is_meta:
+                    apply_pulse(getattr(self, 'combo_modulo', None))
+                    apply_pulse(getattr(self, 'combo_agrupamento', None))
+                else:
+                    apply_pulse(getattr(self, 'tables_list', None))
+                    apply_pulse(getattr(self, 'columns_list', None))
+                    apply_pulse(getattr(self, 'selected_tables_list', None))
+                    apply_pulse(getattr(self, 'selected_columns_list', None))
+            except Exception:
+                pass
+
+            # =========================
+            # limpeza ao alternar modo
+            # =========================
+            try:
+                try:
+                    self._param_filters = []
+                except Exception:
+                    pass
+
+                try:
+                    self._refresh_filters_list()
+                except Exception:
+                    pass
+
+                try:
+                    if hasattr(self, 'sql_preview'):
+                        self.sql_preview.setPlainText('')
+                    self.current_sql = None
+                    self.current_sql_params = None
+                except Exception:
+                    pass
+
+                try:
+                    self.where_input.clear()
+                except Exception:
+                    pass
+
+                try:
+                    if hasattr(self, 'selected_tables_list'):
+                        self.selected_tables_list.clear()
+                    if hasattr(self, 'selected_columns_list'):
+                        self.selected_columns_list.clear()
+                except Exception:
+                    pass
+
+                try:
+                    if is_meta and hasattr(self, 'combo_agrupamento'):
+                        self.combo_agrupamento.blockSignals(True)
+                        self.combo_agrupamento.setCurrentIndex(0)
+                        self.combo_agrupamento.blockSignals(False)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            # força atualização visual
+            try:
+                self.updateGeometry()
+            except Exception:
+                pass
+
         except Exception:
             pass
+
     def execute_query(self):
         """Executa a consulta"""
         sql = self.sql_preview.toPlainText().strip()
@@ -4018,18 +4707,75 @@ class QueryBuilderTab(QWidget):
                     # driver would raise; safer to clear params so call executes the literal SQL
                     params = None
 
-            columns, data = self.qb.execute_query(exec_sql, params)
+            # Execute the query in a worker thread to keep the UI responsive and
+            # show a progress dialog / timer while the query runs.
+            progress = QProgressDialog("Executando consulta...", None, 0, 0, self)
+            progress.setWindowTitle("Executando")
+            progress.setWindowModality(Qt.ApplicationModal)
             try:
-                if getattr(self, 'session_logger', None):
-                    self.session_logger.log('execute_query_success', f'Retorno {len(data)} registros', {'rows': len(data)})
+                progress.setCancelButton(None)
             except Exception:
                 pass
-            self.query_executed.emit(columns, data)
-            QMessageBox.information(
-                self,
-                "Sucesso",
-                f"Consulta executada com sucesso!\n{len(data)} registros retornados."
-            )
+            progress.setMinimumDuration(0)
+            progress.show()
+            QApplication.processEvents()
+
+            class _QueryWorker(QThread):
+                finished_signal = pyqtSignal(list, list)
+                error_signal = pyqtSignal(str)
+
+                def __init__(self, qb, sql, params):
+                    super().__init__()
+                    self._qb = qb
+                    self._sql = sql
+                    self._params = params
+
+                def run(self):
+                    try:
+                        cols, rows = self._qb.execute_query(self._sql, self._params)
+                        self.finished_signal.emit(cols, rows)
+                    except Exception as exc:
+                        self.error_signal.emit(str(exc))
+
+            worker = _QueryWorker(self.qb, exec_sql, params)
+
+            def _on_worker_finished(cols, rows):
+                try:
+                    if getattr(self, 'session_logger', None):
+                        try:
+                            self.session_logger.log('execute_query_success', f'Retorno {len(rows)} registros', {'rows': len(rows)})
+                        except Exception:
+                            pass
+                    progress.close()
+                except Exception:
+                    pass
+                try:
+                    self.query_executed.emit(cols, rows)
+                except Exception:
+                    pass
+                try:
+                    QMessageBox.information(self, "Sucesso", f"Consulta executada com sucesso!\n{len(rows)} registros retornados.")
+                except Exception:
+                    pass
+                try:
+                    worker.deleteLater()
+                except Exception:
+                    pass
+
+            def _on_worker_error(msg):
+                try:
+                    progress.close()
+                except Exception:
+                    pass
+                QMessageBox.critical(self, "Erro", f"Erro ao executar consulta:\n{msg}")
+                try:
+                    worker.deleteLater()
+                except Exception:
+                    pass
+
+            worker.finished_signal.connect(_on_worker_finished)
+            worker.error_signal.connect(_on_worker_error)
+            worker.start()
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao executar consulta:\n{str(e)}")
     
@@ -4230,40 +4976,104 @@ class ManageQueriesDialog(QDialog):
         self.setup_ui()
 
     def setup_ui(self):
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
 
-        # Lista com seleção múltipla
-        self.list_widget = QListWidget()
-        self.list_widget.setSelectionMode(QListWidget.MultiSelection)
-        layout.addWidget(self.list_widget)
+        # ===== Abas =====
+        self.tabs = QTabWidget()
+        main_layout.addWidget(self.tabs)
 
-        # Informações laterais
-        btn_layout = QHBoxLayout()
-        self.btn_rename = QPushButton("Renomear")
-        self.btn_rename.clicked.connect(self.rename_selected)
-        btn_layout.addWidget(self.btn_rename)
+        # =========================================================
+        # ABA 1 — CONSTRUTOR DE CONSULTAS
+        # =========================================================
+        aba_consultas = QWidget()
+        self.tabs.addTab(aba_consultas, "Construtor de Consultas")
 
-        self.btn_export = QPushButton("Exportar (.sql)")
-        self.btn_export.clicked.connect(self.export_selected)
-        btn_layout.addWidget(self.btn_export)
+        aba_layout = QHBoxLayout(aba_consultas)
 
-        self.btn_delete = QPushButton("Excluir selecionadas")
-        self.btn_delete.clicked.connect(self.delete_selected)
-        btn_layout.addWidget(self.btn_delete)
+        splitter_principal = QSplitter(Qt.Horizontal)
+        aba_layout.addWidget(splitter_principal)
 
-        self.btn_refresh = QPushButton("Atualizar")
-        self.btn_refresh.clicked.connect(self.load_queries)
-        btn_layout.addWidget(self.btn_refresh)
+        # =========================================================
+        # COLUNA ESQUERDA — Fontes de dados
+        # =========================================================
+        col_esq = QWidget()
+        col_esq_layout = QVBoxLayout(col_esq)
+        col_esq_layout.setContentsMargins(4, 4, 4, 4)
 
-        btn_layout.addStretch()
+        col_esq_layout.addWidget(self.lbl_fontes)
+        col_esq_layout.addWidget(self.txt_pesquisar_fontes)
+        col_esq_layout.addWidget(self.lst_fontes)
 
-        self.btn_close = QPushButton("Fechar")
-        self.btn_close.clicked.connect(self.accept)
-        btn_layout.addWidget(self.btn_close)
+        col_esq_layout.addWidget(self.lbl_fontes_escolhidas)
+        col_esq_layout.addWidget(self.lst_fontes_escolhidas)
 
-        layout.addLayout(btn_layout)
+        col_esq_layout.addWidget(self.btn_remover_fonte)
+        col_esq_layout.addWidget(self.btn_limpar_tudo)
 
-        self.load_queries()
+        splitter_principal.addWidget(col_esq)
+
+        # =========================================================
+        # COLUNA CENTRAL — Informações + Módulo + Filtros
+        # =========================================================
+        col_centro = QWidget()
+        col_centro_layout = QVBoxLayout(col_centro)
+        col_centro_layout.setContentsMargins(4, 4, 4, 4)
+
+        col_centro_layout.addWidget(self.lbl_info_disp)
+        col_centro_layout.addWidget(self.txt_pesquisar_info)
+        col_centro_layout.addWidget(self.lst_info_disp)
+
+        btns_info = QHBoxLayout()
+        btns_info.addWidget(self.btn_marcar_todas)
+        btns_info.addWidget(self.btn_desmarcar_todas)
+        col_centro_layout.addLayout(btns_info)
+
+        col_centro_layout.addWidget(self.btn_adicionar_info)
+        col_centro_layout.addWidget(self.lbl_info_relatorio)
+        col_centro_layout.addWidget(self.lst_info_relatorio)
+        col_centro_layout.addWidget(self.btn_remover_info)
+
+        col_centro_layout.addSpacing(8)
+
+        col_centro_layout.addWidget(self.lbl_modulo)
+        col_centro_layout.addWidget(self.combo_modulo)
+
+        col_centro_layout.addWidget(self.lbl_filtros)
+        col_centro_layout.addWidget(self.grp_filtros_rapidos)
+        col_centro_layout.addWidget(self.grp_gerenciar_filtros)
+
+        splitter_principal.addWidget(col_centro)
+
+        # =========================================================
+        # COLUNA DIREITA — SQL + Ações
+        # =========================================================
+        col_dir = QWidget()
+        col_dir_layout = QVBoxLayout(col_dir)
+        col_dir_layout.setContentsMargins(4, 4, 4, 4)
+
+        col_dir_layout.addWidget(self.lbl_modo_consulta)
+        col_dir_layout.addWidget(self.combo_relacionamento)
+
+        col_dir_layout.addWidget(self.lbl_sql)
+        col_dir_layout.addWidget(self.txt_sql)
+
+        col_dir_layout.addStretch()
+
+        col_dir_layout.addWidget(self.btn_gerar_consulta)
+        col_dir_layout.addWidget(self.btn_executar_consulta)
+        col_dir_layout.addWidget(self.btn_salvar_consulta)
+        col_dir_layout.addWidget(self.btn_carregar_consulta)
+        col_dir_layout.addWidget(self.btn_excluir_consulta)
+        col_dir_layout.addWidget(self.btn_gerenciar_consultas)
+
+        splitter_principal.addWidget(col_dir)
+
+        # =========================================================
+        # Proporções (imagem 1)
+        # =========================================================
+        splitter_principal.setStretchFactor(0, 2)  # esquerda
+        splitter_principal.setStretchFactor(1, 4)  # centro
+        splitter_principal.setStretchFactor(2, 2)  # direita
 
     def load_queries(self):
         self.list_widget.clear()
@@ -5073,6 +5883,41 @@ class MainWindow(QMainWindow):
         """Estabelece conexão com o banco"""
         try:
             self.conn = get_db_connection(self.db_config)
+            # Após estabelecer conexão, obtém informações do servidor SQL para exibir no rodapé
+            try:
+                sql_info = None
+                cur = self.conn.cursor()
+                try:
+                    cur.execute(
+                        """
+                        SELECT
+                            SERVERPROPERTY('ProductVersion') AS Versao,
+                            SERVERPROPERTY('ProductLevel')   AS ServicePack,
+                            SERVERPROPERTY('Edition')        AS Edicao,
+                            @@SERVERNAME                     AS InstanceName,
+                            DB_NAME()                        AS DatabaseName
+                        """
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        versao = row[0] or ''
+                        servicepack = row[1] or ''
+                        edicao = row[2] or ''
+                        instance = row[3] or ''
+                        dbname = row[4] or (self.db_config.db_name if getattr(self, 'db_config', None) else '')
+                        sql_info = (
+                            f"Microsoft SQL Server versão {versao} | Service Pack {servicepack} | "
+                            f"Versão {edicao} | Instância: {str(instance).upper()} | Banco de dados: {dbname}"
+                        )
+                finally:
+                    try:
+                        cur.close()
+                    except Exception:
+                        pass
+                # armazena para que o setup_ui possa usar ao criar o label
+                self._sql_info_str = sql_info
+            except Exception:
+                logging.exception("Erro obtendo informações do servidor SQL durante a conexão")
         except Exception as e:
             # Log detalhado no terminal para debug
             logging.exception("Erro ao conectar ao banco")
@@ -5081,7 +5926,9 @@ class MainWindow(QMainWindow):
     
     def setup_ui(self):
         """Configura a interface"""
-        self.setWindowTitle(f"{APP_NAME} v{Version.get_version()}")
+        # título contém nome do app + versão, seguido por nome da empresa e usuário logado
+        user_name = self.user_data.get('NomeUsuario') if self.user_data else ''
+        self.setWindowTitle(f"{APP_NAME} v{Version.get_version()} — {COMPANY_NAME} | {user_name}")
         self.setMinimumSize(1200, 800)
         
         # Widget central
@@ -5091,12 +5938,12 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         
         # Barra de informações
-        info_bar = QHBoxLayout()
-        info_bar.addWidget(QLabel(f"<b>Usuário:</b> {self.user_data['NomeUsuario']}"))
-        info_bar.addWidget(QLabel(f"<b>Banco:</b> {self.db_config.db_name}"))
-        info_bar.addWidget(QLabel(f"<b>Servidor:</b> {self.db_config.server_name}"))
-        info_bar.addStretch()
-        layout.addLayout(info_bar)
+        #info_bar = QHBoxLayout()
+        #info_bar.addWidget(QLabel(f"<b>Usuário:</b> {self.user_data['NomeUsuario']}"))
+        #info_bar.addWidget(QLabel(f"<b>Banco:</b> {self.db_config.db_name}"))
+        #info_bar.addWidget(QLabel(f"<b>Servidor:</b> {self.db_config.server_name}"))
+        #info_bar.addStretch()
+        #layout.addLayout(info_bar)
         
         # Tabs
         tabs = QTabWidget()
@@ -5122,6 +5969,9 @@ class MainWindow(QMainWindow):
         # Aba 2: Resultados
         self.results_tab = ResultsTab(ai_generator, chart_generator, report_generator)
         tabs.addTab(self.results_tab, "Resultados e Análise")
+
+        # Expor tabs como atributo para acesso robusto por callbacks externos
+        self.tabs = tabs
         
         # Conecta sinais
         self.query_tab.query_executed.connect(self.on_query_executed)
@@ -5134,7 +5984,21 @@ class MainWindow(QMainWindow):
         self.create_menus()
         
         # Status bar
+        # Mensagem pronta e label centralizado com o nome da empresa no rodapé
         self.statusBar().showMessage("Pronto")
+        try:
+            # cria um QLabel centralizado com as informações do SQL no rodapé
+            try:
+                self.sql_info_label = QLabel(getattr(self, '_sql_info_str', '') or "")
+                self.sql_info_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                self.sql_info_label.setStyleSheet("color: #333; padding:2px 6px; font-size:11px;")
+                # adiciona como permanent widget com stretch para ocupar o centro do rodapé
+                self.statusBar().addPermanentWidget(self.sql_info_label, 1)
+            except Exception:
+                logging.exception("Erro criando label de informações do SQL no rodapé")
+        except Exception:
+            # Em caso de qualquer erro ao configurar o rodapé, não bloqueia a UI principal
+            logging.exception("Erro configurando o rodapé")
     
     def create_menus(self):
         """Cria menus"""
@@ -5171,8 +6035,25 @@ class MainWindow(QMainWindow):
     def on_query_executed(self, columns: list, data: list):
         """Callback quando consulta é executada"""
         self.results_tab.load_data(columns, data)
-        # Muda para aba de resultados
-        self.centralWidget().layout().itemAt(1).widget().setCurrentIndex(1)
+        # Muda para aba de resultados - usa self.tabs quando disponível para evitar
+        # acessar diretamente a estrutura do layout (que pode ter mudado).
+        try:
+            if hasattr(self, 'tabs') and self.tabs is not None:
+                # aba 1 = Construtor, aba 2 = Resultados
+                try:
+                    self.tabs.setCurrentIndex(1)
+                except Exception:
+                    pass
+            else:
+                # fallback: tentar encontrar QTabWidget no centralWidget
+                try:
+                    tw = self.centralWidget().findChild(QTabWidget)
+                    if tw is not None:
+                        tw.setCurrentIndex(1)
+                except Exception:
+                    pass
+        except Exception:
+            pass
     
     def configure_api(self):
         """Configura chave da API OpenAI"""
