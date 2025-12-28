@@ -55,6 +55,11 @@ class LoginDialog(QDialog):
     def setup_ui(self):
         # Ajusta título da janela para mostrar nome reduzido da empresa + indicador de tela
         self.setWindowTitle("CEOsoftware ® | Login")
+        try:
+            # remover o botão de ajuda (?) na barra de título, se presente
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        except Exception:
+            pass
         self.setModal(True)
         self.setMinimumWidth(400)
 
@@ -104,6 +109,44 @@ class LoginDialog(QDialog):
 
         self.setLayout(layout)
 
+        # carregar preferências locais (último DB e usuário) e preencher campos
+        try:
+            self._local_prefs = self._load_local_prefs()
+            matched_db = False
+            user_loaded = False
+            if getattr(self, 'db_combo', None) and isinstance(self._local_prefs, dict):
+                last_db = self._local_prefs.get('last_db')
+                if last_db:
+                    # tentar selecionar pelo texto armazenado
+                    for i in range(self.db_combo.count()):
+                        try:
+                            if self.db_combo.itemText(i) == last_db:
+                                self.db_combo.setCurrentIndex(i)
+                                matched_db = True
+                                break
+                        except Exception:
+                            continue
+            try:
+                last_user = self._local_prefs.get('last_user') if isinstance(self._local_prefs, dict) else None
+                if last_user:
+                    self.username_input.setText(last_user)
+                    user_loaded = True
+            except Exception:
+                pass
+
+            # Se conseguimos preencher último DB e usuário, posicionar foco na senha
+            try:
+                if matched_db and user_loaded:
+                    # usar QTimer.singleShot para garantir foco após o diálogo ser exibido
+                    QTimer.singleShot(0, lambda: self.password_input.setFocus())
+            except Exception:
+                try:
+                    self.password_input.setFocus()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def handle_login(self):
         """Processa o login"""
         username = self.username_input.text().strip()
@@ -133,6 +176,22 @@ class LoginDialog(QDialog):
             if user_data:
                 self.user_data = user_data
                 self.selected_db = selected_cfg
+                try:
+                    # salvar preferências locais: último DB (texto) e usuário
+                    try:
+                        last_db_text = self.db_combo.itemText(self.db_combo.currentIndex()) if getattr(self, 'db_combo', None) else None
+                    except Exception:
+                        last_db_text = None
+                    try:
+                        last_user = self.username_input.text().strip()
+                    except Exception:
+                        last_user = None
+                    try:
+                        self._save_local_prefs({'last_db': last_db_text, 'last_user': last_user})
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
                 self.accept()
                 return
 
@@ -150,6 +209,55 @@ class LoginDialog(QDialog):
                 QMessageBox.critical(self, 'Erro de Login', 'Usuário ou senha inválidos.')
         except Exception as e:
             QMessageBox.critical(self, 'Erro', f'Erro ao conectar/validar no banco selecionado:\n{e}')
+
+    def _prefs_path(self):
+        """Retorna o caminho completo para o prefs JSON (cria pasta c:\\ceosoftware se necessário)."""
+        try:
+            base = Path(r'c:\\ceosoftware')
+            try:
+                base.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            return base / 'csdatastudio.json'
+        except Exception:
+            return Path('csdatastudio.json')
+
+    def _load_local_prefs(self) -> dict:
+        p = self._prefs_path()
+        try:
+            if p.exists():
+                with open(p, 'r', encoding='utf-8') as f:
+                    return json.load(f) or {}
+        except Exception:
+            pass
+        # criar arquivo padrão se não existir
+        try:
+            data = {'last_db': None, 'last_user': None}
+            with open(p, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return data
+        except Exception:
+            return {}
+
+    def _save_local_prefs(self, d: dict):
+        try:
+            p = self._prefs_path()
+            try:
+                cur = {}
+                if p.exists():
+                    try:
+                        with open(p, 'r', encoding='utf-8') as f:
+                            cur = json.load(f) or {}
+                    except Exception:
+                        cur = {}
+                # atualiza com chaves fornecidas
+                cur.update({k: v for k, v in (d or {}).items() if v is not None})
+                with open(p, 'w', encoding='utf-8') as f:
+                    json.dump(cur, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def test_connection(self):
         """Testa a conexão administrativa (SA ou Trusted) para o DB selecionado
