@@ -525,6 +525,49 @@ class QueryBuilderTab(QWidget):
         btn_remove_column.clicked.connect(self.remove_selected_column)
         manual_layout.addWidget(btn_remove_column)
 
+        # Lista de filtros adicionados via menu de contexto (mostrar também na aba Manual)
+        try:
+            manual_layout.addWidget(QLabel("<b>🔎 Filtros adicionados (WHERE)</b>"))
+            self.manual_filters_list = QListWidget()
+            self.manual_filters_list.setSelectionMode(QListWidget.ExtendedSelection)
+            try:
+                self.manual_filters_list.setMinimumHeight(60)
+                self.manual_filters_list.setMaximumHeight(160)
+                self.manual_filters_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            except Exception:
+                pass
+            manual_layout.addWidget(self.manual_filters_list)
+            # instalar event filter para capturar tecla Delete e delegar remoção
+            try:
+                self.manual_filters_list.installEventFilter(self)
+            except Exception:
+                pass
+            try:
+                self.manual_filters_list.setContextMenuPolicy(Qt.CustomContextMenu)
+                self.manual_filters_list.customContextMenuRequested.connect(self.on_manual_filters_context_menu)
+            except Exception:
+                pass
+        except Exception:
+            # fallback silencioso
+            self.manual_filters_list = None
+
+        # Campo para mostrar a SQL gerada no modo Manual (após Gerar consulta)
+        try:
+            manual_layout.addWidget(QLabel("<b>🧠 Consulta gerada (Manual)</b>"))
+            self.manual_sql_preview = QTextEdit()
+            self.manual_sql_preview.setReadOnly(True)
+            try:
+                self.manual_sql_preview.setMaximumHeight(150)
+            except Exception:
+                pass
+            manual_layout.addWidget(self.manual_sql_preview)
+        except Exception:
+            # fallback: garantir atributo mesmo que não possa criar o widget
+            try:
+                self.manual_sql_preview = None
+            except Exception:
+                pass
+
         manual_panel.setLayout(manual_layout)
 
         # --- Pré-definida panel ---
@@ -1967,9 +2010,28 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             return
         menu = QMenu(self)
         act_add = QAction("Adicionar no WHERE", self)
-        act_add.triggered.connect(lambda: self.add_column_to_where(item))
+        act_add.triggered.connect(lambda: self._add_columns_context_items(item))
         menu.addAction(act_add)
         menu.exec_(self.columns_list.mapToGlobal(pos))
+
+    def _add_columns_context_items(self, item):
+        """Adiciona um ou múltiplos itens selecionados ao WHERE. Se houver múltiplos
+        selecionados, abre o diálogo de filtro para cada um em sequência."""
+        try:
+            sels = self.columns_list.selectedItems()
+            if sels and len(sels) > 1:
+                for it in sels:
+                    try:
+                        self.add_column_to_where(it)
+                    except Exception:
+                        pass
+            else:
+                self.add_column_to_where(item)
+        except Exception:
+            try:
+                self.add_column_to_where(item)
+            except Exception:
+                pass
 
     def add_column_to_where(self, item):
         """Insere referência à coluna no campo WHERE (usa schema detectado ou dbo por default)."""
@@ -2014,22 +2076,16 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 # explicitamente 'Nenhum' selecionado -> não usar alias
                 use_alias = False
 
-            if use_alias:
-                aliases = self._compute_aliases_for_selected_tables()
-                alias = aliases.get((schema, table_name))
-                if alias:
-                    field_ref = f"{alias}.[{col_name}]"
-                else:
-                    # fallback para qualificado completo
-                    field_ref = f"[{schema}].[{table_name}].[{col_name}]"
-            else:
-                field_ref = f"[{schema}].[{table_name}].[{col_name}]"
+            # Sempre usar referência qualificada internamente (para SQL).
+            # Para exibição no diálogo preferimos mostrar 'Table.Column' em vez de alias.
+            field_ref_qualified = f"[{schema}].[{table_name}].[{col_name}]"
+            field_ref_display = f"{table_name}.{col_name}"
 
             # mini-diálogo para escolher operador/valor
             dlg = QDialog(self)
             dlg.setWindowTitle(f"Adicionar filtro - {table_name}.{col_name}")
             vlayout = QVBoxLayout(dlg)
-            vlayout.addWidget(QLabel(f"Coluna: {field_ref}"))
+            vlayout.addWidget(QLabel(f"Coluna: {field_ref_display}"))
 
             op_combo = QComboBox()
             # determina operadores possíveis e default por tipo
@@ -2148,6 +2204,21 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             buttons.accepted.connect(try_accept)
             buttons.rejected.connect(dlg.reject)
 
+            # helpers para formatar números (definidos no escopo da função para serem
+            # acessíveis tanto pelo preview quanto pelo processamento final)
+            def format_number_str(s: str) -> str:
+                try:
+                    f = float(s)
+                    if f.is_integer():
+                        return str(int(f))
+                    return str(f)
+                except Exception:
+                    return s
+
+            def format_number_str2(s: str) -> str:
+                # manter igual a format_number_str, separado caso queira tratar diferente
+                return format_number_str(s)
+
             # Atualiza visibilidade do val2 e preview conforme seleção
             def update_ui():
                 op = op_combo.currentText()
@@ -2161,26 +2232,9 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 v2 = val2_edit.text().strip()
                 needs_quotes = data_type and any(t in data_type for t in ("char", "text", "varchar", "nchar", "nvarchar"))
                 needs_number = data_type and any(t in data_type for t in ("int", "bigint", "smallint", "tinyint", "decimal", "numeric", "float", "real", "money"))
-                # helper para formatar números sem trailing .0 quando possível
-                def format_number_str(s: str) -> str:
-                    try:
-                        f = float(s)
-                        if f.is_integer():
-                            return str(int(f))
-                        return str(f)
-                    except Exception:
-                        return s
-                # secondary numeric formatter used elsewhere (defined once to avoid nested def issues)
-                def format_number_str2(s: str) -> str:
-                    try:
-                        f = float(s)
-                        if f.is_integer():
-                            return str(int(f))
-                        return str(f)
-                    except Exception:
-                        return s
+                # use helper formatters defined in outer scope: format_number_str / format_number_str2
                 if op == "IS NULL":
-                    p = f"{field_ref} IS NULL"
+                    p = f"{field_ref_display} IS NULL"
                 elif op == "IN":
                     parts = [p.strip() for p in v1.split(',') if p.strip()] if v1 else []
                     if needs_quotes:
@@ -2200,7 +2254,7 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     elif data_type and any(t in data_type for t in ("int", "bigint", "smallint", "tinyint", "decimal", "numeric", "float", "real", "money")):
                         # numeric IN preview: format numbers
                         parts = [format_number_str(p) for p in parts]
-                    p = f"{field_ref} IN ({', '.join(parts)})" if parts else f"{field_ref} IN (...)"
+                    p = f"{field_ref_display} IN ({', '.join(parts)})" if parts else f"{field_ref_display} IN (...)"
                 elif op == "BETWEEN":
                     if v1 and v2:
                         if data_type and any(t in data_type for t in ("date", "time", "datetime", "smalldatetime", "timestamp")):
@@ -2219,9 +2273,9 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                             else:
                                 a_val = f"'{v1}'" if needs_quotes else v1
                                 b_val = f"'{v2}'" if needs_quotes else v2
-                        p = f"{field_ref} BETWEEN {a_val} AND {b_val}"
+                        p = f"{field_ref_display} BETWEEN {a_val} AND {b_val}"
                     else:
-                        p = f"{field_ref} BETWEEN ... AND ..."
+                        p = f"{field_ref_display} BETWEEN ... AND ..."
                 else:
                     if v1:
                         if data_type and any(t in data_type for t in ("date", "time", "datetime", "smalldatetime", "timestamp")):
@@ -2235,9 +2289,9 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                                 v = format_number_str(v1)
                             else:
                                 v = f"'{v1}'" if needs_quotes else v1
-                        p = f"{field_ref} {op} {v}"
+                        p = f"{field_ref_display} {op} {v}"
                     else:
-                        p = f"{field_ref} {op} ..."
+                        p = f"{field_ref_display} {op} ..."
                 preview_label.setText(p)
 
             op_combo.currentTextChanged.connect(lambda _ : update_ui())
@@ -2256,7 +2310,7 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 needs_number = data_type and any(t in data_type for t in ("int", "bigint", "smallint", "tinyint", "decimal", "numeric", "float", "real", "money"))
 
                 if op == "IS NULL":
-                    expr = f"{field_ref} IS NULL"
+                    expr = f"{field_ref_qualified} IS NULL"
                 elif op == "IN":
                     parts = [p.strip() for p in v1.split(',') if p.strip()]
                     if needs_date:
@@ -2268,7 +2322,7 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                         if needs_number:
                             parts = [format_number_str2(p) for p in parts]
                         # else left as-is
-                    expr = f"{field_ref} IN ({', '.join(parts)})"
+                    expr = f"{field_ref_qualified} IN ({', '.join(parts)})"
                 elif op == "BETWEEN":
                     if needs_date:
                         a = f"'{self.normalize_date(v1)}'"
@@ -2280,7 +2334,7 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                         a = f"'{v1}'"; b = f"'{v2}'"
                     else:
                         a = f"'{v1}'"; b = f"'{v2}'"
-                    expr = f"{field_ref} BETWEEN {a} AND {b}"
+                    expr = f"{field_ref_qualified} BETWEEN {a} AND {b}"
                 else:
                     if needs_date:
                         v = f"'{self.normalize_date(v1)}'"
@@ -2290,7 +2344,7 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                         v = f"'{v1}'"
                     else:
                         v = f"'{v1}'"
-                    expr = f"{field_ref} {op} {v}"
+                    expr = f"{field_ref_qualified} {op} {v}"
 
                 # Instead of inserting into the (now-hidden) where_input field,
                 # add the expression to the parametrized filters list so it
@@ -2304,10 +2358,39 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     # store as (expr, params, meta, connector)
                     connector = connector_combo.currentText() if 'connector_combo' in locals() else 'AND'
                     self._param_filters.append((expr, [], None, connector))
+                    # debug removed: appended expr logged during development
                 except Exception:
                     pass
                 try:
                     self._refresh_filters_list()
+                    # debug removed: manual_filters_list count after refresh
+                    # If for any reason _refresh_filters_list didn't populate the manual list,
+                    # schedule a short deferred fallback to add a simple item. Using a
+                    # deferred QTimer allows the GUI event loop to finish any pending
+                    # updates that may be required for the QListWidget to reflect new
+                    # items (avoids timing/race conditions observed on some systems).
+                    try:
+                        def _deferred_manual_fallback():
+                            try:
+                                if getattr(self, 'manual_filters_list', None) is None:
+                                    return
+                                if self.manual_filters_list.count() == 0:
+                                    try:
+                                        pv = self._format_param_filter_preview(expr, [])
+                                    except Exception:
+                                        pv = expr
+                                    mit2 = QListWidgetItem(pv)
+                                    mit2.setData(Qt.UserRole, (expr, [], None, connector))
+                                    self.manual_filters_list.addItem(mit2)
+                                    # debug removed: deferred fallback added manual item
+                            except Exception:
+                                logging.exception("add_column_to_where: error in deferred manual fallback")
+                        # schedule after a short delay (50ms)
+                        QTimer.singleShot(50, _deferred_manual_fallback)
+                    except Exception:
+                        logging.exception("add_column_to_where: failed to schedule deferred manual fallback")
+                    # log de verificação após tentativa de fallback
+                    # debug removed: manual_filters_list count after fallback
                     # focus and select the newly added item so user sees it immediately
                     try:
                         self.filters_list.setFocus()
@@ -2412,6 +2495,27 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     self._last_hovered_table = None
                 QToolTip.hideText()
             return True
+        # permitir exclusão de filtros via tecla Delete quando foco na lista da aba Manual
+        try:
+            if getattr(self, 'manual_filters_list', None) and source is self.manual_filters_list and event.type() == QEvent.KeyPress:
+                try:
+                    if event.key() == Qt.Key_Delete:
+                        sel_idxs = [i.row() for i in self.manual_filters_list.selectedIndexes()]
+                        if sel_idxs:
+                            for i in sorted(set(sel_idxs), reverse=True):
+                                try:
+                                    self._param_filters.pop(i)
+                                except Exception:
+                                    pass
+                            try:
+                                self._refresh_filters_list()
+                            except Exception:
+                                pass
+                            return True
+                except Exception:
+                    pass
+        except Exception:
+            pass
         return super().eventFilter(source, event)
 
     def on_selected_table_clicked(self, item):
@@ -2852,11 +2956,13 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
 
             # Coleta tabelas selecionadas (raw como '[schema].TableName')
             tables_raw = [self._get_selected_table_raw_text(self.selected_tables_list.item(i)) for i in range(self.selected_tables_list.count())]
-            if not tables_raw:
-                QMessageBox.warning(self, "Aviso", "Selecione ao menos uma fonte (tabela) para o modo manual")
-                return
+            #if not tables_raw:
+            #    QMessageBox.warning(self, "Aviso", "Selecione ao menos uma fonte (tabela) para o modo manual")
+            #    return
 
-            # Compute aliases for selected tables and build FROM clause with aliases
+            # Compute aliases (kept only to translate existing expressions),
+            # but do NOT use reduced aliases in the generated SQL: always use
+            # fully qualified table names in the FROM and in field references.
             aliases = self._compute_aliases_for_selected_tables()
 
             from_parts = []
@@ -2868,10 +2974,8 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 table_name = parts[1].split('(')[0].strip()
                 alias = aliases.get((schema, table_name))
                 selected_tables.append((schema, table_name))
-                if alias:
-                    from_parts.append(f"[{schema}].[{table_name}] AS {alias}")
-                else:
-                    from_parts.append(f"[{schema}].[{table_name}]")
+                # do not use alias in FROM; always use fully qualified table name
+                from_parts.append(f"[{schema}].[{table_name}]")
             from_clause = ', '.join(from_parts)
 
             # Helper para resolver um campo (ex: 'table.col' ou '[schema].[table].[col]') para usar alias
@@ -2896,24 +3000,16 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                         else:
                             # only col? fallback
                             return field_text
-                        # try to find alias for (schema,table) or by table only
-                        alias = None
+                        # Always return fully qualified reference when possible
                         if schema:
-                            alias = aliases.get((schema, table_name))
-                        if not alias:
-                            # search by table name only among selected tables
+                            return f"[{schema}].[{table_name}].[{col}]"
+                        else:
+                            # try to infer schema from selected_tables
                             for s, tname in selected_tables:
                                 if tname.lower() == table_name.lower():
-                                    alias = aliases.get((s, tname))
-                                    break
-                        if alias:
-                            return f"{alias}.[{col}]"
-                        else:
-                            # return fully qualified if schema known
-                            if schema:
-                                return f"[{schema}].[{table_name}].[{col}]"
-                            else:
-                                return f"[{table_name}].[{col}]"
+                                    return f"[{s}].[{table_name}].[{col}]"
+                            # fallback to unqualified but bracketed table
+                            return f"[{table_name}].[{col}]"
                 except Exception:
                     pass
                 return field_text
@@ -2947,17 +3043,24 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                                 expr = str(f); conn = 'AND'
                             # replace qualified field references with aliases
                             try:
-                                # for each selected table, replace occurrences
+                                # for each selected table, replace occurrences of alias or table.col
                                 new_expr = expr
+                                # first replace alias.[col] (if any) to fully qualified
                                 for (schema, table_name), alias in aliases.items():
                                     if not alias:
                                         continue
-                                    # pattern for [schema].[table].[col]
-                                    pat1 = re.compile(rf"\[?{re.escape(schema)}\]?\s*\.\s*\[?{re.escape(table_name)}\]?\s*\.\s*\[?([A-Za-z0-9_]+)\]?", re.IGNORECASE)
-                                    new_expr = pat1.sub(lambda m: f"{alias}.[{m.group(1)}]", new_expr)
-                                    # pattern for table.col (no schema)
-                                    pat2 = re.compile(rf"\b{re.escape(table_name)}\s*\.\s*([A-Za-z0-9_]+)\b", re.IGNORECASE)
-                                    new_expr = pat2.sub(lambda m: f"{alias}.[{m.group(1)}]", new_expr)
+                                    try:
+                                        pat_alias = re.compile(rf"\b{re.escape(alias)}\s*\.\s*\[?([A-Za-z0-9_]+)\]?", re.IGNORECASE)
+                                        new_expr = pat_alias.sub(lambda m, s=schema, t=table_name: f"[{s}].[{t}].[{m.group(1)}]", new_expr)
+                                    except Exception:
+                                        pass
+                                # then replace unqualified table.col or table.[col] with fully qualified
+                                for (schema, table_name) in selected_tables:
+                                    try:
+                                        pat_table = re.compile(rf"\b{re.escape(table_name)}\s*\.\s*\[?([A-Za-z0-9_]+)\]?", re.IGNORECASE)
+                                        new_expr = pat_table.sub(lambda m, s=schema, t=table_name: f"[{s}].[{t}].[{m.group(1)}]", new_expr)
+                                    except Exception:
+                                        pass
                                 expr = new_expr
                             except Exception:
                                 pass
@@ -2992,6 +3095,12 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
 
             # Preview
             self.sql_preview.setPlainText(sql)
+            # também atualiza o preview da aba Manual, se existir
+            try:
+                if getattr(self, 'manual_sql_preview', None) is not None:
+                    self.manual_sql_preview.setPlainText(sql)
+            except Exception:
+                pass
             self.current_sql = sql
 
             # Log
@@ -3178,6 +3287,12 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                         self.combo_filter_field.setEnabled(False)
                     except Exception:
                         pass
+            except Exception:
+                pass
+            try:
+                if getattr(self, 'manual_filters_list', None):
+                    # placeholder: manual_filters_list exists (no-op after cleanup)
+                    pass
             except Exception:
                 pass
         except Exception:
@@ -3848,6 +3963,7 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
     def _refresh_filters_list(self):
         """Atualiza `self.filters_list` a partir de `self._param_filters` e reconstroi o preview em `where_input`."""
         try:
+            # debug removed: _refresh_filters_list entry logs
             # salva texto atual do WHERE para permitir desfazer
             try:
                 prev_where = self.where_input.toPlainText()
@@ -3945,6 +4061,11 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                         it.setText('')
                     except Exception:
                         pass
+                    # NOTE: população da lista `manual_filters_list` é feita
+                    # posteriormente de forma centralizada (com base em `previews`).
+                    # Removemos a tentativa de inserir itens aqui para evitar
+                    # duplicidade e condições de corrida quando o widget ainda
+                    # não foi completamente inicializado.
                     # (Removido) não conectamos mais signals para edição do conector aqui.
                 except Exception:
                     # fallback: item de texto simples
@@ -3954,6 +4075,8 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 # filtros incluídos. Agora todo filtro vai para o gerenciador de
                 # filtros (`self.filters_list`) e não mantemos essa visualização
                 # duplicada.)
+
+            # debug removed: previews length/content logs
 
             # sincroniza WHERE sempre com os filtros parametrizados
             # monta where respeitando conectores por filtro (armazenados como 4a posição)
@@ -4001,6 +4124,57 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 pass
             try:
                 self.where_input.setPlainText(new_where)
+            except Exception:
+                pass
+            # atualizar lista de filtros na aba Manual (se presente)
+            try:
+                if getattr(self, 'manual_filters_list', None):
+                    try:
+                        self.manual_filters_list.clear()
+                        # debug removed: manual_filters_list cleared
+                        for pv, conn in previews:
+                            try:
+                                # debug removed: adding manual item
+                                # Use a plain QListWidgetItem with pre-elided text
+                                # to avoid setItemWidget-related timing issues.
+                                try:
+                                    max_w_m = self.manual_filters_list.viewport().width() - 40
+                                except Exception:
+                                    max_w_m = 300
+                                display_text = pv
+                                try:
+                                    if max_w_m > 30:
+                                        fm = QFontMetrics(self.manual_filters_list.font())
+                                        display_text = fm.elidedText(pv, Qt.ElideRight, max_w_m)
+                                except Exception:
+                                    pass
+                                mit = QListWidgetItem(display_text)
+                                mit.setData(Qt.UserRole, (pv, conn))
+                                self.manual_filters_list.addItem(mit)
+                                # debug removed: manual item added successfully (simple item)
+                            except Exception:
+                                logging.exception("_refresh_filters_list: error adding manual item (simple)")
+                        # debug removed: manual_filters_list.count
+                    except Exception:
+                        logging.exception("_refresh_filters_list: error populating manual_filters_list")
+                    # Fallback simples: se a população com widgets não adicionou
+                    # itens por algum motivo (por exemplo quando o viewport width
+                    # ainda é 0 em inicializações rápidas), adicionamos uma
+                    # versão textual simples dos itens para que o usuário veja
+                    # imediatamente os filtros recém-criados.
+                    try:
+                        if getattr(self, 'manual_filters_list', None) is not None and self.manual_filters_list.count() == 0 and previews:
+                            # debug removed: manual_filters_list empty after widget population
+                            for pv, conn in previews:
+                                try:
+                                    mit_simple = QListWidgetItem(pv)
+                                    mit_simple.setData(Qt.UserRole, (pv, conn))
+                                    self.manual_filters_list.addItem(mit_simple)
+                                except Exception:
+                                    logging.exception("_refresh_filters_list: error adding simple fallback item")
+                            # debug removed: manual_filters_list.count_after_fallback
+                    except Exception:
+                        logging.exception("_refresh_filters_list: error during manual list fallback population")
             except Exception:
                 pass
             # If we're in manual mode, regenerate the manual SQL preview so
@@ -4059,6 +4233,56 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 pass
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Falha ao remover filtros:\n{e}")
+
+    def on_manual_filters_context_menu(self, pos):
+        """Menu de contexto para a lista de filtros na aba Manual (Editar / Remover)."""
+        try:
+            if not getattr(self, 'manual_filters_list', None):
+                return
+            item = self.manual_filters_list.itemAt(pos)
+            if not item:
+                return
+            idx = self.manual_filters_list.row(item)
+            menu = QMenu(self)
+            act_edit = QAction("✏️ Editar filtro", self)
+            act_remove = QAction("➖ Remover filtro", self)
+            act_edit.triggered.connect(lambda: self._edit_filter_by_index(idx))
+            act_remove.triggered.connect(lambda: self._remove_filter_by_index(idx))
+            menu.addAction(act_edit)
+            menu.addAction(act_remove)
+            menu.exec_(self.manual_filters_list.mapToGlobal(pos))
+        except Exception:
+            pass
+
+    def _edit_filter_by_index(self, idx: int):
+        """Seleciona o filtro correspondente na `filters_list` e abre o editor existente."""
+        try:
+            if idx is None:
+                return
+            try:
+                # seleciona o item correspondente na lista principal e delega
+                self.filters_list.setCurrentRow(idx)
+                self._edit_selected_filter()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _remove_filter_by_index(self, idx: int):
+        """Remove um filtro pelo índice e atualiza as visualizações."""
+        try:
+            if idx is None:
+                return
+            try:
+                self._param_filters.pop(idx)
+            except Exception:
+                pass
+            try:
+                self._refresh_filters_list()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _edit_selected_filter(self):
         """Edita um filtro selecionado com widgets adequados ao tipo (data/número/texto) e operador.
@@ -6344,7 +6568,7 @@ def main():
     """Função principal"""
     # Configura logging para DEBUG no terminal para facilitar debug
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.INFO,
         format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
         handlers=[logging.StreamHandler(sys.stdout)]
     )
@@ -6357,7 +6581,7 @@ def main():
 
     sys.excepthook = _excepthook
 
-    logging.debug('Iniciando aplicação CSData Studio')
+    logging.info('Iniciando aplicação CSData Studio')
 
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
