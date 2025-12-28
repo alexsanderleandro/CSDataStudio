@@ -1,12 +1,12 @@
 from PyQt5.QtWidgets import QMenu, QAction, QListWidgetItem, QApplication
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QEvent, QTimer, QDate, QObject, QPropertyAnimation
-from PyQt5.QtGui import QIcon, QFont, QColor
+from PyQt5.QtGui import QIcon, QFont, QColor, QFontMetrics
 from PyQt5.QtWidgets import QToolTip, QDialog, QVBoxLayout, QTextEdit, QGraphicsOpacityEffect
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QLineEdit, QComboBox, QDialogButtonBox, QMessageBox,
     QCheckBox, QHBoxLayout, QListWidget, QPushButton, QGroupBox,
     QDateEdit, QDoubleSpinBox, QSpinBox, QFileDialog, QInputDialog,
-    QProgressDialog, QToolButton
+    QProgressDialog, QToolButton, QScrollArea
 )
 from PyQt5.QtWidgets import QSizePolicy
 from numbers import Number
@@ -18,6 +18,7 @@ import re
 import datetime as _dt
 import json
 from typing import Optional, List
+from PyQt5.QtWidgets import QHBoxLayout
 
 # Imports dos módulos do projeto
 from version import Version, APP_NAME, COMPANY_NAME
@@ -111,97 +112,44 @@ class LoginDialog(QDialog):
         # Seleciona DB escolhido primeiro
         selected_cfg = None
         if self.db_combo:
-            idx = self.db_combo.currentIndex()
             try:
+                idx = self.db_combo.currentIndex()
                 selected_cfg = self.db_options[idx]
             except Exception:
                 selected_cfg = None
         else:
-            # fallback: tenta ler a configuração padrão
-            from config_manager import ConfigManager
-            selected_cfg = ConfigManager.read_config()
+            try:
+                selected_cfg = ConfigManager.read_config()
+            except Exception:
+                selected_cfg = None
 
         if not selected_cfg:
             QMessageBox.critical(self, "Erro", "Nenhuma configuração de banco disponível.")
             return
 
         try:
-            db_type = (selected_cfg.db_type or "").upper()
-
-            # MSDE -> Windows Authentication (Trusted). Forçar ambos vazios.
-            if db_type == 'MSDE':
-                if username or password:
-                    QMessageBox.information(
-                        self,
-                        "Autenticação Windows",
-                        "Tipo de banco MSDE: será usado Windows Authentication (Trusted Connection).\n"
-                        "Deixe Usuário e Senha vazios para usar a conta Windows atual."
-                    )
-                    return
-
-                user_data, reason = verify_user(None, None, selected_cfg, return_reason=True)
-
-            else:
-                # Para SQLSERVER (ou padrão), exige username+password (SQL Auth)
-                if not username or not password:
-                    QMessageBox.warning(
-                        self,
-                        "Credenciais necessárias",
-                        "Preencha Usuário e Senha para autenticação SQL (TipoBanco=SQLSERVER)."
-                    )
-                    return
-
-                user_data, reason = verify_user(username, password, selected_cfg, return_reason=True)
-
+            # valida usuário (verify_user trata SA/Trusted conforme tipo)
+            user_data, reason = verify_user(username or None, password or None, selected_cfg, return_reason=True)
             if user_data:
                 self.user_data = user_data
                 self.selected_db = selected_cfg
                 self.accept()
-            else:
-                # mostrar mensagem apropriada baseada na razão retornada
-                if 'reason' in locals() and reason:
-                    if reason == 'inactive':
-                        QMessageBox.critical(
-                            self,
-                            "Sem Permissão",
-                            "Usuário inativo. Contate o administrador para ativar a conta."
-                        )
-                    elif reason == 'insufficient_level':
-                        QMessageBox.critical(
-                            self,
-                            "Sem Permissão",
-                            "Acesso restrito: somente usuários com nível Supervisor podem acessar este módulo."
-                        )
-                    elif reason == 'invalid_credentials':
-                        QMessageBox.critical(
-                            self,
-                            "Erro de Login",
-                            "Usuário ou senha inválidos."
-                        )
-                    elif reason == 'cannot_validate_encrypted_password':
-                        QMessageBox.critical(
-                            self,
-                            "Erro de Login",
-                            "Senha criptografada no servidor e procedimento de validação ausente. Contate o DBA."
-                        )
-                    else:
-                        QMessageBox.critical(
-                            self,
-                            "Erro de Login",
-                            "Falha ao validar usuário. Contate o administrador."
-                        )
+                return
+
+            # sem usuário válido: mostrar razão se disponível
+            if reason:
+                if reason == 'inactive':
+                    QMessageBox.critical(self, 'Sem Permissão', 'Usuário inativo. Contate o administrador.')
+                elif reason == 'insufficient_level':
+                    QMessageBox.critical(self, 'Sem Permissão', 'Acesso restrito: nível insuficiente.')
+                elif reason == 'invalid_credentials':
+                    QMessageBox.critical(self, 'Erro de Login', 'Usuário ou senha inválidos.')
                 else:
-                    QMessageBox.critical(
-                        self,
-                        "Erro de Login",
-                        "Usuário ou senha inválidos."
-                    )
+                    QMessageBox.critical(self, 'Erro de Login', 'Falha ao validar usuário. Contate o administrador.')
+            else:
+                QMessageBox.critical(self, 'Erro de Login', 'Usuário ou senha inválidos.')
         except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Erro",
-                f"Erro ao conectar/validar no banco selecionado:\n{str(e)}"
-            )
+            QMessageBox.critical(self, 'Erro', f'Erro ao conectar/validar no banco selecionado:\n{e}')
 
     def test_connection(self):
         """Testa a conexão administrativa (SA ou Trusted) para o DB selecionado
@@ -243,41 +191,13 @@ class LoginDialog(QDialog):
         except Exception as e:
             # Mostra a mensagem completa do erro ODBC/pyodbc para diagnóstico
             err_msg = str(e)
-            # Não tentamos automaticamente conectar com as credenciais informadas
-            # quando TipoBanco=SQLSERVER — por regra do sistema, a conexão ao
-            # servidor deve ser feita com SA/csloginciasoft; as credenciais
-            # digitadas são apenas para autenticação no módulo.
-            msg = (
-                "Tentativa (SA/Trusted) falhou:\n" + err_msg +
-                "\n\nObservação: por configuração, quando TipoBanco=SQLSERVER a aplicação sempre tenta\n"
-                "conectar ao servidor usando UID=sa e PWD=csloginciasoft.\n"
-                "O usuário/senha informados no formulário são utilizados apenas para validar o acesso\n"
-                "ao módulo (consulta na tabela Usuarios) e não para estabelecer a conexão com o SQL Server.\n"
-                "Se desejar tentar conectar com as credenciais informadas, use a ferramenta externa de\n"
-                "teste ou habilite esse comportamento manualmente no código."
-            )
-            QMessageBox.critical(self, "Falha na conexão", msg)
-        
-def _format_iso_timestamp(ts: str) -> str:
-    """Formata timestamps ISO removendo microsegundos quando possível.
-
-    Exemplos:
-      '2025-12-19T10:36:51.210698' -> '2025-12-19T10:36:51'
-      se parsing falhar, remove parte após '.' como fallback.
-    """
-    if not ts:
-        return ''
-    try:
-        # usa fromisoformat para aceitar offsets também
-        dt = _dt.datetime.fromisoformat(ts)
-        # retorna no formato 'YYYY-MM-DD HH:MM:SS' (espaço entre data e hora)
-        return dt.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        # fallback simples: corta após ponto
-        return ts.split('.')[0] if '.' in ts else ts
+            try:
+                QMessageBox.critical(self, "Erro de conexão", f"Erro ao testar conexão:\n{err_msg}")
+            except Exception:
+                pass
+            return
 
     
-
 class QueryBuilderTab(QWidget):
     """Aba de construção de consultas"""
     
@@ -354,14 +274,26 @@ class QueryBuilderTab(QWidget):
         return cols
     
     def setup_ui(self):
-        layout = QHBoxLayout()
+        # layout principal: barra superior (modo) + splitter abaixo
+        layout = QVBoxLayout()
         # ajustar margens e espaçamento principais
         try:
             layout.setContentsMargins(8, 8, 8, 8)
             layout.setSpacing(8)
         except Exception:
             pass
+
+        # (modo radios are inserted later into the actions panel)
         
+        # cria a barra superior que conterá os controles de modo (rádios/help)
+        top_bar = QWidget()
+        try:
+            top_bar_layout = QHBoxLayout(top_bar)
+            top_bar_layout.setContentsMargins(6, 2, 6, 2)
+            top_bar_layout.setSpacing(8)
+        except Exception:
+            top_bar_layout = QHBoxLayout(top_bar)
+
         # === PAINEL ESQUERDO: Seleção ===
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
@@ -523,31 +455,43 @@ class QueryBuilderTab(QWidget):
 
         # Módulo / Agrupamento (Query Builder metadata)
         # Modo de consulta: metadados ou manual
-        mode_layout = QHBoxLayout()
+        # We'll separate the small radio group from the hint/help so we can
+        # force the radios to remain at the left of the top bar and the hint
+        # to the right.
+        mode_buttons_layout = QHBoxLayout()
         mode_label = QLabel("Modo de consulta:")
-        mode_layout.addWidget(mode_label)
+        mode_buttons_layout.addWidget(mode_label)
         self.mode_meta_radio = QRadioButton("Pré-definida")
         self.mode_manual_radio = QRadioButton("Manual")
         self.mode_meta_radio.setChecked(True)
-        mode_layout.addWidget(self.mode_meta_radio)
-        mode_layout.addWidget(self.mode_manual_radio)
-        # Hint label para mostrar modo atual com destaque
+        mode_buttons_layout.addWidget(self.mode_meta_radio)
+        mode_buttons_layout.addWidget(self.mode_manual_radio)
+        # Hint label para mostrar modo atual com destaque (placed on the right)
         self.mode_hint_label = QLabel("")
         self.mode_hint_label.setStyleSheet('font-weight: bold;')
         self.mode_hint_label.setContentsMargins(8, 0, 0, 0)
-        mode_layout.addWidget(self.mode_hint_label)
-        # Help icon (small) with tooltip and clickable dialog
+        # Help icon (small) with tooltip and clickable dialog (also on the right)
         self.mode_help_btn = QToolButton()
         try:
-            # Use a standard information icon if available
             self.mode_help_btn.setText("ℹ")
             self.mode_help_btn.setToolTip("O que significa cada modo? Clique para mais informações.")
             self.mode_help_btn.setCursor(Qt.PointingHandCursor)
             self.mode_help_btn.setStyleSheet('border: none; font-size: 14px;')
             self.mode_help_btn.clicked.connect(self.show_query_mode_help)
-            mode_layout.addWidget(self.mode_help_btn)
         except Exception:
             pass
+        # backward-compatible container used by older fallbacks
+        try:
+            mode_layout = QHBoxLayout()
+            try:
+                mode_layout.addLayout(mode_buttons_layout)
+                mode_layout.addStretch()
+                mode_layout.addWidget(self.mode_hint_label, alignment=Qt.AlignVCenter)
+                mode_layout.addWidget(self.mode_help_btn, alignment=Qt.AlignVCenter)
+            except Exception:
+                pass
+        except Exception:
+            mode_layout = None
         # mover os controles de modo (Pré-definida / Manual) para o canto superior esquerdo
         try:
             # botão expansor do painel esquerdo (indica onde clicar para expandir/minimizar)
@@ -574,28 +518,24 @@ class QueryBuilderTab(QWidget):
             except Exception:
                 pass
 
-            # Instead of inserting the expander inside the left panel (which
-            # hides it when the panel is hidden), place it in a small
-            # dedicated container that will be added to the splitter later.
+            # place the expander button on the top bar (left) so it remains
+            # visible regardless of the left panel's visibility. Then place
+            # the mode controls to the right of it.
             try:
-                self.expander_container = QWidget()
                 try:
-                    exp_l = QVBoxLayout(self.expander_container)
-                    exp_l.setContentsMargins(2, 6, 2, 6)
-                    exp_l.setSpacing(0)
+                    top_bar_layout.addWidget(self.btn_expander, alignment=Qt.AlignLeft)
                 except Exception:
-                    exp_l = QVBoxLayout(self.expander_container)
+                    top_bar_layout.addWidget(self.btn_expander)
+                # NOTE: radio buttons are moved to the actions column on the
+                # right (so we don't add them to the top bar). Keep the
+                # fallbacks minimal here.
+                # push hint/help to the right
                 try:
-                    exp_l.addWidget(self.btn_expander, alignment=Qt.AlignTop | Qt.AlignLeft)
+                    top_bar_layout.addStretch()
+                    top_bar_layout.addWidget(self.mode_hint_label, alignment=Qt.AlignVCenter)
+                    top_bar_layout.addWidget(self.mode_help_btn, alignment=Qt.AlignVCenter)
                 except Exception:
-                    exp_l.addWidget(self.btn_expander)
-
-                # still insert the mode layout at the top of the left panel
-                try:
-                    left_layout.insertLayout(0, mode_layout)
-                except Exception:
-                    # fallback: keep on right panel
-                    right_layout.addLayout(mode_layout)
+                    pass
             except Exception:
                 # fallback: original behavior (insert inside left panel)
                 try:
@@ -920,6 +860,12 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         # Gerenciador de filtros parametrizados (lista + remover/limpar)
         manage_box = QGroupBox("Gerenciar filtros")
         manage_layout = QVBoxLayout(manage_box)
+        try:
+            # garantir espaço entre o título do QGroupBox e o conteúdo
+            manage_layout.setContentsMargins(8, 22, 8, 8)
+            manage_layout.setSpacing(6)
+        except Exception:
+            pass
 
         self.filters_list = QListWidget()
         self.filters_list.setSelectionMode(QListWidget.ExtendedSelection)
@@ -927,6 +873,20 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             QSizePolicy.Expanding,
             QSizePolicy.Expanding
         )
+        try:
+            # garantir altura mínima e máxima para evitar que a lista ocupe
+            # todo o espaço e empurre os botões para fora em telas baixas
+            # em notebooks 1366x768 uma altura máxima de ~180 deixa espaço
+            # para os botões abaixo; ajustável se necessário.
+            self.filters_list.setMinimumHeight(80)
+            self.filters_list.setMaximumHeight(180)
+            # garantir barra de rolagem vertical quando necessário
+            try:
+                self.filters_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            except Exception:
+                pass
+        except Exception:
+            pass
         manage_layout.addWidget(self.filters_list)
 
         # === Botões em layout vertical (evita sobreposição em telas menores) ===
@@ -966,7 +926,31 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         _cfg_btn(self.btn_redo_where)
         btn_layout.addWidget(self.btn_redo_where)
 
-        manage_layout.addLayout(btn_layout)
+        # colocar os botões em um widget container para garantir que
+        # ocupem espaço fixo na parte inferior do grupo e possam ser
+        # visualizados mesmo quando a lista de filtros for rolada.
+        try:
+            # usar QScrollArea para o conjunto de botões: mantém botões
+            # com tamanho normal e adiciona barra de rolagem quando necessário
+            btn_container_scroll = QScrollArea()
+            btn_container_scroll.setWidgetResizable(True)
+            btn_inner = QWidget()
+            btn_inner.setLayout(btn_layout)
+            btn_container_scroll.setWidget(btn_inner)
+            try:
+                btn_container_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                btn_container_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            except Exception:
+                pass
+            try:
+                # limitar altura do scroll area para que ele não ocupe todo o grupo
+                btn_container_scroll.setMaximumHeight(200)
+            except Exception:
+                pass
+            manage_layout.addWidget(btn_container_scroll)
+        except Exception:
+            # fallback: adiciona o layout diretamente
+            manage_layout.addLayout(btn_layout)
 
 
         # WHERE input (mover para dentro do grupo Gerenciar filtros para evitar duplicação)
@@ -1069,10 +1053,6 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         btn_manage.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_manage)
 
-        # NOTE: Instead of embedding action_layout inside right_panel, we'll create
-        # um painel de ações à direita do formulário (quarto painel no splitter)
-        # para manter os botões sempre alinhados verticalmente à direita.
-        # Mantemos right_panel sem os botões.
         right_layout.addStretch()
         right_panel.setLayout(right_layout)
         
@@ -1081,8 +1061,9 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         actions_panel = QWidget()
         actions_layout = QVBoxLayout(actions_panel)
         try:
-            actions_layout.setContentsMargins(6,6,6,6)
-            actions_layout.setSpacing(8)
+            actions_layout.setContentsMargins(6,4,6,6)
+            actions_layout.setSpacing(6)
+            actions_layout.setAlignment(Qt.AlignTop)
         except Exception:
             pass
         # transferir os botões criados acima para este layout (eles já existem)
@@ -1138,20 +1119,39 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         except Exception:
             pass
 
-        splitter = QSplitter(Qt.Horizontal)
-        # add the expander container first so the expander remains visible
-        # even when the left_panel is hidden
+        # Inserir os rádios de modo na coluna de ações (antes dos botões)
         try:
-            splitter.addWidget(self.expander_container)
-        except Exception:
-            # if expander_container wasn't created for some reason, fall back
-            # to adding a tiny spacer widget so layout remains stable
+            mode_widget = QWidget()
+            mv = QVBoxLayout(mode_widget)
+            mv.setContentsMargins(0, 0, 0, 6)
+            mv.setSpacing(4)
+            # ordem solicitada: primeiro Pré-definida, abaixo Manual
             try:
-                spacer = QWidget()
-                spacer.setFixedWidth(28)
-                splitter.addWidget(spacer)
+                mv.addWidget(self.mode_meta_radio)
+                mv.addWidget(self.mode_manual_radio)
             except Exception:
                 pass
+            # inserir logo abaixo do controle de largura (índice 1)
+            try:
+                # insert with top-left alignment so radios appear close to top
+                actions_layout.insertWidget(1, mode_widget, alignment=Qt.AlignTop | Qt.AlignLeft)
+            except Exception:
+                try:
+                    actions_layout.addWidget(mode_widget, alignment=Qt.AlignTop | Qt.AlignLeft)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # ensure content stays compact at the top by adding a stretch at the end
+        try:
+            actions_layout.addStretch()
+        except Exception:
+            pass
+
+        splitter = QSplitter(Qt.Horizontal)
+        # NOTE: expander button is now in the top_bar; no need to add a
+        # separate expander container to the splitter.
         splitter.addWidget(left_panel)
         splitter.addWidget(center_panel)
         splitter.addWidget(right_panel)
@@ -1163,6 +1163,11 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         splitter.setStretchFactor(3, 2)
         splitter.setStretchFactor(4, 0)
         
+        # adicionar a barra superior (contendo os rádios de modo) acima do splitter
+        try:
+            layout.addWidget(top_bar)
+        except Exception:
+            pass
         layout.addWidget(splitter)
         self.setLayout(layout)
         # Por padrão, definir modo 'metadados' (bloqueia controles manuais)
@@ -1197,6 +1202,12 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         # O popup agora abre apenas via menu de contexto (botão direito -> Mostrar dependências).
         # Clique em tabela selecionada mostra apenas suas colunas disponíveis
         self.selected_tables_list.itemClicked.connect(self.on_selected_table_clicked)
+        # inicializa limites dinâmicos para lista de filtros
+        try:
+            # call once to set sensible maximum based on current widget size
+            self._update_filters_list_max_height()
+        except Exception:
+            pass
     
     def load_tables(self):
         """Carrega tabelas e views do banco"""
@@ -1216,6 +1227,43 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 self.tables_list.addItem(it)
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao carregar tabelas:\n{str(e)}")
+
+    def _update_filters_list_max_height(self):
+        """Calcula e aplica uma altura máxima para `self.filters_list` com base
+        na altura atual do widget, evitando que a lista ocupe todo o espaço
+        e esconda os botões em telas com pouca altura.
+        """
+        try:
+            # se o widget ainda não existir, nada a fazer
+            if not getattr(self, 'filters_list', None):
+                return
+            total_h = self.height() if hasattr(self, 'height') else 600
+            # reservar uma fração da altura para a lista (ex: 35-45%)
+            max_h = int(total_h * 0.42)
+            if max_h < 80:
+                max_h = 80
+            if max_h > 400:
+                max_h = 400
+            try:
+                self.filters_list.setMaximumHeight(max_h)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def resizeEvent(self, event):
+        # atualiza limite da lista de filtros ao redimensionar
+        try:
+            try:
+                super().resizeEvent(event)
+            except Exception:
+                pass
+            try:
+                self._update_filters_list_max_height()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _load_table_name_mapping(self) -> dict:
         """Carrega mapeamento de nomes amigáveis de `table_friendly_names.json` se existir."""
@@ -3721,7 +3769,8 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 except Exception:
                     continue
                 pv = self._format_param_filter_preview(expr, params)
-                it = QListWidgetItem(pv)
+                # criar item vazio (texto será mostrado pelo widget embutido)
+                it = QListWidgetItem()
                 # armazenar a tupla (expr, params, meta, connector) no UserRole
                 it.setData(Qt.UserRole, (expr, params, meta, connector))
                 self.filters_list.addItem(it)
@@ -3746,6 +3795,30 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     expr_lbl = QLabel(pv)
                     expr_lbl.setWordWrap(True)
                     expr_lbl.setTextInteractionFlags(expr_lbl.textInteractionFlags() | Qt.TextSelectableByMouse)
+                    try:
+                        # reduzir fonte para melhorar encaixe em telas menores
+                        f = expr_lbl.font()
+                        f.setPointSize(10)
+                        expr_lbl.setFont(f)
+                    except Exception:
+                        pass
+                    try:
+                        expr_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                    except Exception:
+                        pass
+                    try:
+                        # aplicar elisão horizontal para textos muito longos
+                        max_w = 0
+                        try:
+                            max_w = self.filters_list.viewport().width() - 100
+                        except Exception:
+                            max_w = 300
+                        if max_w > 30:
+                            fm = QFontMetrics(expr_lbl.font())
+                            el = fm.elidedText(pv, Qt.ElideRight, max_w)
+                            expr_lbl.setText(el)
+                    except Exception:
+                        pass
                     # NOTE: removemos o widget de seleção do conector da lista "Gerenciar filtros"
                     # para simplificar a UI conforme solicitado. O conector continua sendo
                     # armazenado em Qt.UserRole para uso na geração da SQL, mas não é
@@ -3753,6 +3826,17 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     h.addWidget(expr_lbl)
                     h.addStretch()
                     self.filters_list.setItemWidget(it, container)
+                    # assegurar que o QListWidgetItem tenha o tamanho do widget
+                    try:
+                        it.setSizeHint(container.sizeHint())
+                    except Exception:
+                        pass
+                    # limpar texto do item para evitar sobreposição entre o
+                    # texto interno do QListWidgetItem e o widget customizado
+                    try:
+                        it.setText('')
+                    except Exception:
+                        pass
                     # (Removido) não conectamos mais signals para edição do conector aqui.
                 except Exception:
                     # fallback: item de texto simples
@@ -4522,6 +4606,33 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                         self.table_search.setEnabled(not is_meta)
                     if hasattr(self, 'column_search'):
                         self.column_search.setEnabled(not is_meta)
+                except Exception:
+                    pass
+                # Além de habilitar/desabilitar, controlar também a visibilidade
+                # dos campos relacionados às fontes de dados: no modo 'metadados'
+                # esses campos não devem aparecer no formulário (aparecem apenas
+                # no modo manual).
+                try:
+                    visible = not is_meta
+                    for name in ('table_search', 'tables_list', 'selected_tables_list', 'btn_remove_table', 'btn_clear_tables'):
+                        try:
+                            if hasattr(self, name):
+                                getattr(self, name).setVisible(visible)
+                        except Exception:
+                            pass
+
+                    # Também tentar esconder labels estáticos (se existirem) com
+                    # os textos esperados para evitar que os títulos permaneçam.
+                    try:
+                        for lbl in self.findChildren(QLabel):
+                            try:
+                                txt = lbl.text() or ''
+                                if any(k in txt for k in ("De onde vêm os dados", "Fontes de dados escolhidas", "📂 De onde", "📌 Fontes")):
+                                    lbl.setVisible(visible)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
                 except Exception:
                     pass
             except Exception:
