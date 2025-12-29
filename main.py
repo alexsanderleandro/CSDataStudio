@@ -39,6 +39,26 @@ except Exception:
     def get_field_label(module, field_name):
         return None
 
+
+def _format_iso_timestamp(dt):
+    """Formata um objeto datetime para string ISO sem microssegundos.
+
+    Aceita strings ou objetos datetime; retorna representação legível.
+    """
+    try:
+        if dt is None:
+            return ''
+        # se já for string simples, retornar
+        if isinstance(dt, str):
+            return dt.split('.')[0]
+        # tratar objetos datetime
+        try:
+            return dt.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            return str(dt)
+    except Exception:
+        return str(dt)
+
 class LoginDialog(QDialog):
     """Diálogo de login
 
@@ -328,6 +348,9 @@ class QueryBuilderTab(QWidget):
         self._table_name_map = {}
         # cache de colunas por tabela (chave: 'schema.table') para reduzir consultas ao banco
         self._columns_cache = {}
+    # referência ao diálogo de progresso atual (mantida para fechar apenas
+    # depois que a UI principal processar os resultados)
+        self._current_progress = None
         # debug flag: ativar logs temporários para depuração da população de filtros
         self._debug_filter_populate = True
         self.setup_ui()
@@ -499,9 +522,20 @@ class QueryBuilderTab(QWidget):
         self.column_search.textChanged.connect(self.filter_columns)
         manual_layout.addWidget(self.column_search)
 
-        self.columns_list = QListWidget()
-        self.columns_list.setSelectionMode(QListWidget.MultiSelection)
+        # Mostrar colunas agrupadas por tabela usando QTreeWidget para permitir
+        # expandir/recolher grupos quando houver várias tabelas selecionadas.
+        from PyQt5.QtWidgets import QTreeWidget, QAbstractItemView
+        self.columns_list = QTreeWidget()
+        self.columns_list.setHeaderHidden(True)
+        # permitir seleção múltipla de colunas
+        self.columns_list.setSelectionMode(QAbstractItemView.MultiSelection)
         manual_layout.addWidget(self.columns_list)
+        # conectar sinais para trocar ícone ao expandir/recolher grupos
+        try:
+            self.columns_list.itemExpanded.connect(self._on_columns_group_expanded)
+            self.columns_list.itemCollapsed.connect(self._on_columns_group_collapsed)
+        except Exception:
+            pass
 
         col_btns = QHBoxLayout()
         self.btn_select_all = QPushButton("✔️ Marcar todas")
@@ -519,11 +553,30 @@ class QueryBuilderTab(QWidget):
 
         manual_layout.addWidget(QLabel("<b>✅ Informações que aparecerão no relatório</b>"))
         self.selected_columns_list = QListWidget()
+        # permitir reordenar por arrastar e soltar internamente
+        try:
+            from PyQt5.QtWidgets import QAbstractItemView
+            self.selected_columns_list.setDragDropMode(QAbstractItemView.InternalMove)
+        except Exception:
+            pass
+        # context menu for selected_columns_list was removed (group-by feature deferred)
         manual_layout.addWidget(self.selected_columns_list)
+
+        # botões para mover a ordem das informações (subir / descer) e remover
+        move_btns = QHBoxLayout()
+        self.btn_move_up = QPushButton("↑ Subir")
+        self.btn_move_up.clicked.connect(self.move_selected_column_up)
+        move_btns.addWidget(self.btn_move_up)
+
+        self.btn_move_down = QPushButton("↓ Descer")
+        self.btn_move_down.clicked.connect(self.move_selected_column_down)
+        move_btns.addWidget(self.btn_move_down)
 
         btn_remove_column = QPushButton("➖ Remover informação")
         btn_remove_column.clicked.connect(self.remove_selected_column)
-        manual_layout.addWidget(btn_remove_column)
+        move_btns.addWidget(btn_remove_column)
+
+        manual_layout.addLayout(move_btns)
 
         # Lista de filtros adicionados via menu de contexto (mostrar também na aba Manual)
         try:
@@ -553,7 +606,7 @@ class QueryBuilderTab(QWidget):
 
         # Campo para mostrar a SQL gerada no modo Manual (após Gerar consulta)
         try:
-            manual_layout.addWidget(QLabel("<b>🧠 Consulta gerada (Manual)</b>"))
+            manual_layout.addWidget(QLabel("<b>🧠 Consulta gerada</b>"))
             self.manual_sql_preview = QTextEdit()
             self.manual_sql_preview.setReadOnly(True)
             try:
@@ -606,9 +659,6 @@ class QueryBuilderTab(QWidget):
 
         # Módulo / Agrupamento (Query Builder metadata)
         # Modo de consulta: metadados ou manual
-        # We'll separate the small radio group from the hint/help so we can
-        # force the radios to remain at the left of the top bar and the hint
-        # to the right.
         mode_buttons_layout = QHBoxLayout()
         mode_label = QLabel("Modo de consulta:")
         mode_buttons_layout.addWidget(mode_label)
@@ -1157,7 +1207,7 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         action_layout = QVBoxLayout()
         # Opções de alias
         alias_layout = QHBoxLayout()
-        self.use_alias_cb = QCheckBox("Exibir qual tipo de nome para a tabela na consulta:")
+        self.use_alias_cb = QCheckBox("Exibir qual tipo de nome para a tabela na consulta?")
         self.use_alias_cb.setChecked(True)
         alias_layout.addWidget(self.use_alias_cb)
 
@@ -1166,13 +1216,15 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         alias_layout.addWidget(self.alias_style_combo)
         action_layout.addLayout(alias_layout)
 
-        btn_generate = QPushButton("🧩 Gerar consulta")
+        btn_generate = QPushButton("🔄 Atualizar a consulta")
+        btn_generate.setToolTip("Atualiza a SQL gerada com as recentes alterações")
         btn_generate.clicked.connect(self.generate_sql)
         btn_generate.setMinimumWidth(140)
         btn_generate.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_generate)
 
         btn_execute = QPushButton("▶️ Executar consulta")
+        btn_execute.setToolTip("Executa a consulta SQL gerada")
         btn_execute.clicked.connect(self.execute_query)
         btn_execute.setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
         btn_execute.setMinimumWidth(140)
@@ -1180,29 +1232,37 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         action_layout.addWidget(btn_execute)
 
         btn_save = QPushButton("💾 Salvar consulta")
+        btn_save.setToolTip("Salva a consulta SQL atual")
         btn_save.clicked.connect(self.save_query)
         btn_save.setMinimumWidth(140)
         btn_save.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_save)
 
         btn_load = QPushButton("📂 Carregar consulta")
+        btn_load.setToolTip("Carrega uma consulta SQL salva")
         btn_load.clicked.connect(self.load_query)
         btn_load.setMinimumWidth(140)
         btn_load.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_load)
 
         btn_delete = QPushButton("🗑️ Excluir consulta")
+        btn_delete.setToolTip("Excluir uma consulta SQL salva")
         btn_delete.clicked.connect(self.delete_query)
         btn_delete.setMinimumWidth(140)
         btn_delete.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_delete)
 
-        btn_manage = QPushButton("🔧 Gerenciar consultas")
+        #btn_manage = QPushButton("🔧 Gerenciar consultas")
         # Abrir o gerenciador de consultas da janela principal (MainWindow)
-        btn_manage.clicked.connect(lambda: (self.window().open_manage_queries() if hasattr(self.window(), 'open_manage_queries') else None))
-        btn_manage.setMinimumWidth(140)
-        btn_manage.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        action_layout.addWidget(btn_manage)
+        # Conexão comentada por solicitação do usuário — rotina desativada.
+        # btn_manage.clicked.connect(lambda: (self.window().open_manage_queries() if hasattr(self.window(), 'open_manage_queries') else None))
+        #try:
+        #    btn_manage.setEnabled(False)
+        #    btn_manage.setToolTip('Desativado temporariamente')
+        #except Exception:
+        #btn_manage.setMinimumWidth(140)
+        #btn_manage.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        #action_layout.addWidget(btn_manage)
 
         right_layout.addStretch()
         right_panel.setLayout(right_layout)
@@ -1219,17 +1279,18 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             pass
         # transferir os botões criados acima para este layout (eles já existem)
         try:
+            # adicionar todos os botões criados acima (inclui btn_generate)
             actions_layout.addWidget(btn_generate)
             actions_layout.addWidget(btn_execute)
             actions_layout.addWidget(btn_save)
             actions_layout.addWidget(btn_load)
             actions_layout.addWidget(btn_delete)
-            actions_layout.addWidget(btn_manage)
+            #actions_layout.addWidget(btn_manage)
         except Exception:
             pass
         # Ajustes visuais: largura/altura consistentes para formar botões retangulares
         try:
-            for b in (btn_generate, btn_execute, btn_save, btn_load, btn_delete, btn_manage):
+            for b in (btn_generate, btn_execute, btn_save, btn_load, btn_delete):
                 try:
                     b.setMinimumWidth(150)
                     b.setFixedHeight(36)
@@ -1278,8 +1339,22 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             mv.setSpacing(4)
             # ordem solicitada: primeiro Pré-definida, abaixo Manual
             try:
+                # caption above radios
+                try:
+                    mv.addWidget(QLabel("Tipo de consulta"))
+                except Exception:
+                    pass
                 mv.addWidget(self.mode_meta_radio)
                 mv.addWidget(self.mode_manual_radio)
+                # linha horizontal abaixo dos rádios para separar visualmente
+                try:
+                    from PyQt5.QtWidgets import QFrame
+                    hr = QFrame()
+                    hr.setFrameShape(QFrame.HLine)
+                    hr.setFrameShadow(QFrame.Sunken)
+                    mv.addWidget(hr)
+                except Exception:
+                    pass
             except Exception:
                 pass
             # inserir logo abaixo do controle de largura (índice 1)
@@ -1345,14 +1420,32 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         self.tables_list.itemDoubleClicked.connect(lambda _ : self.add_selected_tables())
         # Single click on a table toggles its presence in selected_tables_list
         self.tables_list.itemClicked.connect(self.toggle_selected_table)
-        self.columns_list.itemDoubleClicked.connect(lambda _ : self.add_selected_columns())
+        # Atualiza estado dos botões de ação quando a seleção de tabelas mudar
+        try:
+            self.selected_tables_list.itemSelectionChanged.connect(self._update_action_buttons_state)
+        except Exception:
+            pass
+        # itemDoubleClicked emits (item, column) for QTreeWidget; accept any args
+        try:
+            self.columns_list.itemDoubleClicked.connect(lambda *a: self.add_selected_columns())
+        except Exception:
+            try:
+                self.columns_list.itemDoubleClicked.connect(lambda _ : self.add_selected_columns())
+            except Exception:
+                pass
         # Menu de contexto na lista de colunas para inserir no WHERE
-        self.columns_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.columns_list.customContextMenuRequested.connect(self.on_columns_context_menu)
+        try:
+            self.columns_list.setContextMenuPolicy(Qt.CustomContextMenu)
+            self.columns_list.customContextMenuRequested.connect(self.on_columns_context_menu)
+        except Exception:
+            pass
         # Mostrar detalhes da tabela: removido comportamento de abrir no clique simples.
         # O popup agora abre apenas via menu de contexto (botão direito -> Mostrar dependências).
         # Clique em tabela selecionada mostra apenas suas colunas disponíveis
-        self.selected_tables_list.itemClicked.connect(self.on_selected_table_clicked)
+        try:
+            self.selected_tables_list.itemClicked.connect(self.on_selected_table_clicked)
+        except Exception:
+            pass
         # inicializa limites dinâmicos para lista de filtros
         try:
             # call once to set sensible maximum based on current widget size
@@ -1600,8 +1693,12 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
     
     def update_available_columns(self):
         """Atualiza lista de colunas disponíveis baseado nas tabelas selecionadas"""
-        self.columns_list.clear()
-        
+        # Usar QTreeWidget para agrupar campos por tabela (expandível)
+        try:
+            self.columns_list.clear()
+        except Exception:
+            pass
+
         for i in range(self.selected_tables_list.count()):
             item = self.selected_tables_list.item(i)
             table_text = self._get_selected_table_raw_text(item)
@@ -1613,17 +1710,61 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             try:
                 columns = self._get_columns_cached(schema, table_name)
                 pk_cols = self.qb.get_primary_keys(schema, table_name)
+                # grupo (tabela) como item de topo
+                try:
+                    from PyQt5.QtWidgets import QTreeWidgetItem
+                    grp = QTreeWidgetItem([f"{table_name}"])
+                    # destacar em negrito
+                    try:
+                        f = grp.font(0)
+                        f.setBold(True)
+                        grp.setFont(0, f)
+                    except Exception:
+                        pass
+                    # ícone inicial (seta para direita)
+                    try:
+                        from PyQt5.QtWidgets import QStyle
+                        grp.setIcon(0, QApplication.style().standardIcon(QStyle.SP_ArrowRight))
+                    except Exception:
+                        pass
+                    self.columns_list.addTopLevelItem(grp)
+                    try:
+                        # iniciar recolhido para facilitar visual
+                        self.columns_list.collapseItem(grp)
+                    except Exception:
+                        pass
+                except Exception:
+                    grp = None
+
                 for col in columns:
                     col_text = f"{table_name}.{col.column_name} ({col.data_type})"
-                    item = QListWidgetItem(col_text)
-                    # Highlight PK columns
-                    if col.column_name in pk_cols:
-                        font = item.font()
-                        font.setBold(True)
-                        item.setFont(font)
-                        item.setForeground(QColor('blue'))
-                        item.setToolTip('Chave primária')
-                    self.columns_list.addItem(item)
+                    try:
+                        child = QTreeWidgetItem([col_text])
+                        # Highlight PK columns
+                        if col.column_name in pk_cols:
+                            try:
+                                cf = child.font(0)
+                                cf.setBold(True)
+                                child.setFont(0, cf)
+                                try:
+                                    child.setForeground(0, QColor('blue'))
+                                except Exception:
+                                    pass
+                                child.setToolTip(0, 'Chave primária')
+                            except Exception:
+                                pass
+                        if grp is not None:
+                            grp.addChild(child)
+                        else:
+                            # fallback: adicionar direto como top-level
+                            self.columns_list.addTopLevelItem(child)
+                    except Exception:
+                        # fallback minimal: tentar inserir como texto simples
+                        try:
+                            it = QListWidgetItem(col_text)
+                            self.columns_list.addTopLevelItem(it)
+                        except Exception:
+                            pass
             except Exception as e:
                 print(f"Erro ao carregar colunas de {table_name}: {e}")
 
@@ -1746,6 +1887,14 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
     def toggle_selected_table(self, item: QListWidgetItem):
         """Ao clicar numa tabela na lista principal, alterna sua presença em selected_tables_list."""
         try:
+            # Ao selecionar uma tabela, limpar imediatamente a lista de informações
+            # disponíveis (evita que colunas de seleção anterior permaneçam visíveis
+            # enquanto atualizamos a seleção). Isso é desejado no modo Manual.
+            try:
+                if getattr(self, 'columns_list', None):
+                    self.columns_list.clear()
+            except Exception:
+                pass
             # usar o valor bruto armazenado no UserRole quando disponível
             raw = item.data(Qt.UserRole) or item.text()
             # procura se já existe
@@ -1794,6 +1943,7 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 except Exception:
                     pass
                 self.selected_tables_list.addItem(li)
+            # atualiza colunas disponíveis com base na seleção (após limpar acima)
             self.update_available_columns()
         except Exception as e:
             print(f"Erro ao alternar seleção de tabela: {e}")
@@ -1802,12 +1952,54 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         """Filtra a lista de colunas disponíveis por nome (case-insensitive)."""
         try:
             q = (text or '').strip().lower()
-            for i in range(self.columns_list.count()):
-                it = self.columns_list.item(i)
-                if not q:
-                    it.setHidden(False)
-                else:
-                    it.setHidden(q not in it.text().lower())
+            # Suporta tanto QListWidget quanto QTreeWidget (grupos de colunas)
+            # QTreeWidget: iterar top-level groups e seus filhos
+            if hasattr(self.columns_list, 'topLevelItemCount'):
+                for gi in range(self.columns_list.topLevelItemCount()):
+                    group = self.columns_list.topLevelItem(gi)
+                    group_text = ''
+                    try:
+                        group_text = (group.text(0) or '').lower()
+                    except Exception:
+                        try:
+                            group_text = (group.text() or '').lower()
+                        except Exception:
+                            group_text = ''
+
+                    any_child_visible = False
+                    for ci in range(group.childCount()):
+                        child = group.child(ci)
+                        try:
+                            child_text = (child.text(0) or '').lower()
+                        except Exception:
+                            try:
+                                child_text = (child.text() or '').lower()
+                            except Exception:
+                                child_text = ''
+
+                        if not q or q in child_text or q in group_text:
+                            child.setHidden(False)
+                            any_child_visible = True
+                        else:
+                            child.setHidden(True)
+
+                    # esconder o grupo se nenhum filho visível e o próprio grupo não combinar
+                    try:
+                        group.setHidden(False if (not q or any_child_visible or q in group_text) else True)
+                    except Exception:
+                        pass
+            else:
+                # QListWidget fallback
+                q = (text or '').strip().lower()
+                for i in range(self.columns_list.count()):
+                    it = self.columns_list.item(i)
+                    if not q:
+                        it.setHidden(False)
+                    else:
+                        try:
+                            it.setHidden(q not in it.text().lower())
+                        except Exception:
+                            it.setHidden(False)
         except Exception as e:
             print(f"Erro ao filtrar colunas: {e}")
 
@@ -1989,17 +2181,59 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
 
     def select_all_columns(self):
         try:
-            for i in range(self.columns_list.count()):
-                item = self.columns_list.item(i)
-                item.setSelected(True)
+            # suportar QListWidget e QTreeWidget
+            if hasattr(self.columns_list, 'count'):
+                for i in range(self.columns_list.count()):
+                    item = self.columns_list.item(i)
+                    try:
+                        item.setSelected(True)
+                    except Exception:
+                        pass
+            else:
+                # QTreeWidget: selecionar todos os filhos de todos os grupos
+                try:
+                    for ti in range(self.columns_list.topLevelItemCount()):
+                        top = self.columns_list.topLevelItem(ti)
+                        # se o top for um grupo com filhos, selecionar filhos
+                        try:
+                            for ci in range(top.childCount()):
+                                child = top.child(ci)
+                                child.setSelected(True)
+                        except Exception:
+                            # fallback: selecionar o top-level se for folha
+                            try:
+                                top.setSelected(True)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
         except Exception as e:
             print(f"Erro ao selecionar todas colunas: {e}")
 
     def deselect_all_columns(self):
         try:
-            for i in range(self.columns_list.count()):
-                item = self.columns_list.item(i)
-                item.setSelected(False)
+            if hasattr(self.columns_list, 'count'):
+                for i in range(self.columns_list.count()):
+                    item = self.columns_list.item(i)
+                    try:
+                        item.setSelected(False)
+                    except Exception:
+                        pass
+            else:
+                try:
+                    for ti in range(self.columns_list.topLevelItemCount()):
+                        top = self.columns_list.topLevelItem(ti)
+                        try:
+                            for ci in range(top.childCount()):
+                                child = top.child(ci)
+                                child.setSelected(False)
+                        except Exception:
+                            try:
+                                top.setSelected(False)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
         except Exception as e:
             print(f"Erro ao desmarcar todas colunas: {e}")
 
@@ -2036,7 +2270,19 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
     def add_column_to_where(self, item):
         """Insere referência à coluna no campo WHERE (usa schema detectado ou dbo por default)."""
         try:
-            text = item.text()
+            # suportar QListWidgetItem.item.text() e QTreeWidgetItem.text(column)
+            try:
+                text = item.text()
+            except TypeError:
+                try:
+                    text = item.text(0)
+                except Exception:
+                    text = str(item)
+            except Exception:
+                try:
+                    text = item.text(0)
+                except Exception:
+                    text = str(item)
             # formato esperado: table.column (type)
             table_col = text.split('(')[0].strip()
             parts = table_col.split('.')
@@ -2527,11 +2773,44 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             table_name = parts[1].split('(')[0].strip()
 
             # Limpa colunas disponíveis e carrega apenas desta tabela
-            self.columns_list.clear()
+            try:
+                self.columns_list.clear()
+            except Exception:
+                pass
+            try:
+                from PyQt5.QtWidgets import QTreeWidgetItem
+                grp = QTreeWidgetItem([f"{table_name}"])
+                try:
+                    f = grp.font(0)
+                    f.setBold(True)
+                    grp.setFont(0, f)
+                except Exception:
+                    pass
+                # ícone inicial (seta para direita)
+                try:
+                    from PyQt5.QtWidgets import QStyle
+                    grp.setIcon(0, QApplication.style().standardIcon(QStyle.SP_ArrowRight))
+                except Exception:
+                    pass
+                self.columns_list.addTopLevelItem(grp)
+                try:
+                    self.columns_list.collapseItem(grp)
+                except Exception:
+                    pass
+            except Exception:
+                grp = None
+
             columns = self._get_columns_cached(schema, table_name)
-            for col in columns:
-                col_text = f"{table_name}.{col.column_name} ({col.data_type})"
-                self.columns_list.addItem(col_text)
+            for col in (columns or []):
+                try:
+                    col_text = f"{table_name}.{col.column_name} ({col.data_type})"
+                    child = QTreeWidgetItem([col_text])
+                    self.columns_list.addTopLevelItem(child) if grp is None else grp.addChild(child)
+                except Exception:
+                    try:
+                        self.columns_list.addTopLevelItem(QTreeWidgetItem([f"{table_name}.{col.column_name}"]))
+                    except Exception:
+                        pass
         except Exception as e:
             print(f"Erro ao carregar colunas da tabela clicada: {e}")
 
@@ -2540,11 +2819,69 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         selected_items = self.columns_list.selectedItems()
         if not selected_items:
             return
-        
+
+        existing = [self.selected_columns_list.item(i).text() for i in range(self.selected_columns_list.count())]
         for item in selected_items:
-            if item.text() not in [self.selected_columns_list.item(i).text() 
-                                  for i in range(self.selected_columns_list.count())]:
-                self.selected_columns_list.addItem(item.text())
+            # ignore top-level group items (tables) when using QTreeWidget
+            try:
+                if hasattr(item, 'childCount') and callable(item.childCount):
+                    if item.childCount() > 0 and (getattr(item, 'parent', lambda: None)() is None):
+                        continue
+            except Exception:
+                pass
+
+            # get text safely (QListWidgetItem.text() vs QTreeWidgetItem.text(0))
+            txt = None
+            try:
+                # try list widget style
+                txt = item.text()
+            except TypeError:
+                try:
+                    txt = item.text(0)
+                except Exception:
+                    txt = str(item)
+            except Exception:
+                try:
+                    txt = item.text(0)
+                except Exception:
+                    txt = str(item)
+
+            if txt and txt not in existing:
+                self.selected_columns_list.addItem(txt)
+
+        # limpar toda seleção após adicionar para comportamento consistente
+        try:
+            if hasattr(self.columns_list, 'clearSelection'):
+                self.columns_list.clearSelection()
+        except Exception:
+            pass
+
+    # group-by context menu and helpers removed per user request
+
+        def _on_columns_group_expanded(self, item):
+            """Handler: ao expandir um grupo na árvore de colunas trocar o ícone para seta para baixo."""
+            try:
+                # somente para grupos (itens com filhos)
+                if hasattr(item, 'childCount') and callable(item.childCount) and item.childCount() > 0:
+                    try:
+                        from PyQt5.QtWidgets import QStyle
+                        item.setIcon(0, QApplication.style().standardIcon(QStyle.SP_ArrowDown))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        def _on_columns_group_collapsed(self, item):
+            """Handler: ao recolher um grupo na árvore de colunas trocar o ícone para seta à direita."""
+            try:
+                if hasattr(item, 'childCount') and callable(item.childCount) and item.childCount() > 0:
+                    try:
+                        from PyQt5.QtWidgets import QStyle
+                        item.setIcon(0, QApplication.style().standardIcon(QStyle.SP_ArrowRight))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
     
     def remove_selected_column(self):
         """Remove coluna selecionada"""
@@ -2553,6 +2890,35 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             self.selected_columns_list.takeItem(
                 self.selected_columns_list.row(current_item)
             )
+
+    def move_selected_column_up(self):
+        """Move a informação selecionada uma posição para cima na lista."""
+        try:
+            row = self.selected_columns_list.currentRow()
+            if row <= 0:
+                return
+            item = self.selected_columns_list.takeItem(row)
+            # reinserir no índice anterior
+            self.selected_columns_list.insertItem(row - 1, item)
+            self.selected_columns_list.setCurrentRow(row - 1)
+        except Exception:
+            pass
+
+    def move_selected_column_down(self):
+        """Move a informação selecionada uma posição para baixo na lista."""
+        try:
+            row = self.selected_columns_list.currentRow()
+            if row < 0:
+                return
+            count = self.selected_columns_list.count()
+            if row >= count - 1:
+                return
+            item = self.selected_columns_list.takeItem(row)
+            # ao remover, a lista encurta, então inserir em row+1 coloca após o anterior
+            self.selected_columns_list.insertItem(row + 1, item)
+            self.selected_columns_list.setCurrentRow(row + 1)
+        except Exception:
+            pass
     
     def generate_sql(self):
         """Dispatcher: gera SQL conforme o modo selecionado.
@@ -2975,8 +3341,138 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 alias = aliases.get((schema, table_name))
                 selected_tables.append((schema, table_name))
                 # do not use alias in FROM; always use fully qualified table name
-                from_parts.append(f"[{schema}].[{table_name}]")
-            from_clause = ', '.join(from_parts)
+                from_parts.append((schema, table_name))
+
+            # Se há joins especificados em selected_tables (armazenados em UserRole+1),
+            # construir cláusula FROM usando JOIN ... ON quando possível. Caso contrário,
+            # usar a lista separada por vírgulas (comportamento antigo).
+            try:
+                any_join = False
+                for i in range(self.selected_tables_list.count()):
+                    try:
+                        it = self.selected_tables_list.item(i)
+                        jt = it.data(Qt.UserRole + 1)
+                        if jt:
+                            any_join = True
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                any_join = False
+
+            if not any_join:
+                # comportamento legado: lista separada por vírgulas
+                from_clause = ', '.join([f"[{s}].[{t}]" for s, t in from_parts])
+            else:
+                # construir com JOINs, tentando inferir ON via FKs
+                qb_local = getattr(self, 'qb', None)
+                # base = primeira tabela
+                if from_parts:
+                    base_schema, base_table = from_parts[0]
+                    base_repr = f"[{base_schema}].[{base_table}]"
+                else:
+                    base_repr = ''
+                join_clauses = []
+                # iterar tabelas subsequentes e tentar aplicar JOIN quando o usuário indicou
+                for idx in range(1, len(from_parts)):
+                    s, tname = from_parts[idx]
+                    # join type armazenado no item correspondente
+                    try:
+                        item = self.selected_tables_list.item(idx)
+                        join_type = item.data(Qt.UserRole + 1)
+                    except Exception:
+                        join_type = None
+
+                    table_repr = f"[{s}].[{tname}]"
+
+                    if join_type and qb_local is not None:
+                        # tentar encontrar FKs entre a tabela anterior (idx-1) e esta
+                        on_parts = []
+                        try:
+                            # primeiro, ver se a tabela anterior possui FK apontando para a atual
+                            prev_s, prev_t = from_parts[idx - 1]
+                            fks_prev = qb_local.get_foreign_keys(prev_s, prev_t) or []
+                            for fk in fks_prev:
+                                try:
+                                    if fk.pk_table.lower() == tname.lower() and fk.pk_schema.lower() == s.lower():
+                                        # prev.prev_col = cur.pk_col
+                                        left = f"[{prev_s}].[{prev_t}].[{fk.fk_column}]"
+                                        right = f"[{s}].[{tname}].[{fk.pk_column}]"
+                                        on_parts.append(f"{left} = {right}")
+                                except Exception:
+                                    continue
+                        except Exception:
+                            pass
+
+                        try:
+                            # segundo, ver se a tabela atual possui FK apontando para a anterior
+                            fks_cur = qb_local.get_foreign_keys(s, tname) or []
+                            for fk in fks_cur:
+                                try:
+                                    if fk.pk_table.lower() == prev_t.lower() and fk.pk_schema.lower() == prev_s.lower():
+                                        left = f"[{s}].[{tname}].[{fk.fk_column}]"
+                                        right = f"[{prev_s}].[{prev_t}].[{fk.pk_column}]"
+                                        on_parts.append(f"{left} = {right}")
+                                except Exception:
+                                    continue
+                        except Exception:
+                            pass
+
+                        # se não encontrou relacionamentos com a tabela anterior, tentar procurar
+                        # em qualquer tabela já adicionada (busca mais ampla)
+                        if not on_parts:
+                            try:
+                                for jprev in range(0, idx):
+                                    ps, pt = from_parts[jprev]
+                                    try:
+                                        fks = qb_local.get_foreign_keys(ps, pt) or []
+                                        for fk in fks:
+                                            if fk.pk_table.lower() == tname.lower() and fk.pk_schema.lower() == s.lower():
+                                                left = f"[{ps}].[{pt}].[{fk.fk_column}]"
+                                                right = f"[{s}].[{tname}].[{fk.pk_column}]"
+                                                on_parts.append(f"{left} = {right}")
+                                    except Exception:
+                                        pass
+                                    try:
+                                        fks2 = qb_local.get_foreign_keys(s, tname) or []
+                                        for fk in fks2:
+                                            if fk.pk_table.lower() == pt.lower() and fk.pk_schema.lower() == ps.lower():
+                                                left = f"[{s}].[{tname}].[{fk.fk_column}]"
+                                                right = f"[{ps}].[{pt}].[{fk.pk_column}]"
+                                                on_parts.append(f"{left} = {right}")
+                                    except Exception:
+                                        pass
+                                    if on_parts:
+                                        break
+                            except Exception:
+                                pass
+
+                        if on_parts:
+                            on_expr = ' AND '.join(on_parts)
+                            join_clauses.append(f"{join_type} {table_repr} ON {on_expr}")
+                        else:
+                                    # Se não encontramos FK automaticamente, pedir ao usuário
+                                    try:
+                                        # prior_tables: todas as tabelas já adicionadas antes desta
+                                        prior_tables = [(ps, pt) for ps, pt in from_parts[:idx]]
+                                        user_on = self._ask_user_for_join_on(prior_tables, (s, tname), join_type)
+                                        if user_on:
+                                            join_clauses.append(f"{join_type} {table_repr} ON {user_on}")
+                                        else:
+                                            # fallback para não travar: adicionar como tabela separada (vírgula)
+                                            join_clauses.append(f", {table_repr}")
+                                    except Exception:
+                                        join_clauses.append(f", {table_repr}")
+                    else:
+                        # sem join type: manter como tabela separada
+                        join_clauses.append(f", {table_repr}")
+
+                # montar from_clause como base + joins
+                if base_repr:
+                    from_clause = base_repr + (' ' + ' '.join(join_clauses) if join_clauses else '')
+                else:
+                    from_clause = ', '.join([f"[{s}].[{t}]" for s, t in from_parts])
+            
 
             # Helper para resolver um campo (ex: 'table.col' ou '[schema].[table].[col]') para usar alias
             def _resolve_field_to_alias(field_text: str):
@@ -3015,14 +3511,15 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 return field_text
 
             # Build select clause: if user selected columns, try to use aliases for them
+            # If no columns selected, do NOT show the default 'SELECT * FROM' in the
+            # preview — instead only show the FROM clause (or nothing if no tables).
             if not cols:
-                select_clause = '*'
+                select_clause = None
             else:
                 cleaned = []
                 for c in cols:
                     m = re.match(r"^([^\(]+)\s*(?:\(.*\))?$", c)
                     raw_field = m.group(1).strip() if m else c
-                    # raw_field expected like 'table.col' or 'schema.table.col'
                     cleaned.append(_resolve_field_to_alias(raw_field))
                 select_clause = ', '.join(cleaned)
 
@@ -3089,9 +3586,19 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             else:
                 where_clause = self.where_input.toPlainText().strip()
 
-            sql = f"SELECT {select_clause} FROM {from_clause}"
+            # Monta SQL levando em conta o comportamento desejado quando
+            # nenhuma coluna foi selecionada: não exibimos 'SELECT * FROM'.
+            if not select_clause:
+                if from_clause:
+                    sql = f"FROM {from_clause}"
+                else:
+                    sql = ''
+            else:
+                sql = f"SELECT {select_clause} FROM {from_clause}"
             if where_clause:
                 sql += f" WHERE {where_clause}"
+
+            # GROUP BY handling removed (feature deferred)
 
             # Preview
             self.sql_preview.setPlainText(sql)
@@ -3112,6 +3619,98 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
 
         except Exception as e:
             QMessageBox.critical(self, "Erro ao gerar SQL (manual)", f"{e}")
+    
+    def _ask_user_for_join_on(self, prior_tables: list, current_table: tuple, join_type: str = 'INNER JOIN') -> Optional[str]:
+        """Mostra diálogo para o usuário escolher par de colunas para usar em ON
+        prior_tables: list de (schema,table) já adicionadas
+        current_table: (schema,table) da tabela a ser juntada
+        Retorna expressão ON (string) ou None se cancelado.
+        """
+        try:
+            from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QDialogButtonBox
+            dlg = QDialog(self)
+            dlg.setWindowTitle(f"Definir condição de JOIN para {current_table[1]}")
+            v = QVBoxLayout(dlg)
+            v.addWidget(QLabel(f"Defina a condição ON para {join_type} entre a tabela alvo e uma tabela existente."))
+
+            # escolha da tabela anterior
+            table_sel_layout = QHBoxLayout()
+            table_sel_layout.addWidget(QLabel("Tabela existente:"))
+            prior_combo = QComboBox()
+            prior_combo.addItems([f"{s}.{t}" for s, t in prior_tables])
+            table_sel_layout.addWidget(prior_combo)
+            v.addLayout(table_sel_layout)
+
+            # colunas
+            col_layout = QHBoxLayout()
+            col_layout.addWidget(QLabel("Coluna (existente):"))
+            prior_col = QComboBox()
+            col_layout.addWidget(prior_col)
+            col_layout.addWidget(QLabel("Coluna (nova):"))
+            curr_col = QComboBox()
+            col_layout.addWidget(curr_col)
+            v.addLayout(col_layout)
+
+            # preencher listas de colunas
+            def load_columns_for_prior(idx=0):
+                try:
+                    s, t = prior_tables[prior_combo.currentIndex()]
+                    cols = []
+                    try:
+                        cols = [c.column_name for c in (self.qb.get_table_columns(s, t) or [])]
+                    except Exception:
+                        cols = []
+                    prior_col.clear()
+                    prior_col.addItems(cols or ["(sem colunas)"])
+                except Exception:
+                    prior_col.clear()
+
+            def load_columns_for_current():
+                try:
+                    cs, ct = current_table
+                    cols = []
+                    try:
+                        cols = [c.column_name for c in (self.qb.get_table_columns(cs, ct) or [])]
+                    except Exception:
+                        cols = []
+                    curr_col.clear()
+                    curr_col.addItems(cols or ["(sem colunas)"])
+                except Exception:
+                    curr_col.clear()
+
+            prior_combo.currentIndexChanged.connect(lambda _ : load_columns_for_prior())
+            load_columns_for_prior()
+            load_columns_for_current()
+
+            btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            v.addWidget(btns)
+            def on_accept():
+                # validar
+                try:
+                    if prior_col.count() == 0 or curr_col.count() == 0:
+                        QMessageBox.warning(dlg, "Escolha inválida", "Não há colunas disponíveis para formar ON.")
+                        return
+                except Exception:
+                    pass
+                dlg.accept()
+            btns.accepted.connect(on_accept)
+            btns.rejected.connect(dlg.reject)
+
+            if dlg.exec_() == QDialog.Accepted:
+                try:
+                    ps, pt = prior_tables[prior_combo.currentIndex()]
+                    pc = prior_col.currentText()
+                    cs, ct = current_table
+                    cc = curr_col.currentText()
+                    if not pc or not cc or pc.startswith('(') or cc.startswith('('):
+                        return None
+                    on_expr = f"[{ps}].[{pt}].[{pc}] = [{cs}].[{ct}].[{cc}]"
+                    return on_expr
+                except Exception:
+                    return None
+            return None
+        except Exception:
+            return None
         
     def on_modulo_changed(self, index: int):
         """Handler para quando o usuário muda o módulo na UI.
@@ -4148,9 +4747,41 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                                         display_text = fm.elidedText(pv, Qt.ElideRight, max_w_m)
                                 except Exception:
                                     pass
-                                mit = QListWidgetItem(display_text)
+                                mit = QListWidgetItem()
                                 mit.setData(Qt.UserRole, (pv, conn))
-                                self.manual_filters_list.addItem(mit)
+                                try:
+                                    # create embedded widget: checkbox + label
+                                    container_m = QWidget()
+                                    h_m = QHBoxLayout(container_m)
+                                    h_m.setContentsMargins(6, 2, 6, 2)
+                                    chk = QCheckBox()
+                                    chk.setChecked(False)
+                                    # label with elided text
+                                    lbl = QLabel(display_text)
+                                    lbl.setWordWrap(False)
+                                    lbl.setTextInteractionFlags(lbl.textInteractionFlags() | Qt.TextSelectableByMouse)
+                                    try:
+                                        f = lbl.font()
+                                        f.setPointSize(10)
+                                        lbl.setFont(f)
+                                    except Exception:
+                                        pass
+                                    h_m.addWidget(chk, 0, Qt.AlignVCenter)
+                                    h_m.addWidget(lbl, 1)
+                                    h_m.addStretch()
+                                    self.manual_filters_list.addItem(mit)
+                                    self.manual_filters_list.setItemWidget(mit, container_m)
+                                    try:
+                                        mit.setSizeHint(container_m.sizeHint())
+                                    except Exception:
+                                        pass
+                                except Exception:
+                                    # fallback to plain item if widget embedding fails
+                                    try:
+                                        mit.setText(display_text)
+                                        self.manual_filters_list.addItem(mit)
+                                    except Exception:
+                                        logging.exception("_refresh_filters_list: error adding manual item (widget)")
                                 # debug removed: manual item added successfully (simple item)
                             except Exception:
                                 logging.exception("_refresh_filters_list: error adding manual item (simple)")
@@ -4167,9 +4798,28 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                             # debug removed: manual_filters_list empty after widget population
                             for pv, conn in previews:
                                 try:
-                                    mit_simple = QListWidgetItem(pv)
+                                    mit_simple = QListWidgetItem()
                                     mit_simple.setData(Qt.UserRole, (pv, conn))
-                                    self.manual_filters_list.addItem(mit_simple)
+                                    try:
+                                        container_m = QWidget()
+                                        h_m = QHBoxLayout(container_m)
+                                        h_m.setContentsMargins(6, 2, 6, 2)
+                                        chk = QCheckBox()
+                                        chk.setChecked(False)
+                                        lbl = QLabel(pv)
+                                        lbl.setWordWrap(False)
+                                        h_m.addWidget(chk, 0, Qt.AlignVCenter)
+                                        h_m.addWidget(lbl, 1)
+                                        h_m.addStretch()
+                                        self.manual_filters_list.addItem(mit_simple)
+                                        self.manual_filters_list.setItemWidget(mit_simple, container_m)
+                                        try:
+                                            mit_simple.setSizeHint(container_m.sizeHint())
+                                        except Exception:
+                                            pass
+                                    except Exception:
+                                        mit_simple.setText(pv)
+                                        self.manual_filters_list.addItem(mit_simple)
                                 except Exception:
                                     logging.exception("_refresh_filters_list: error adding simple fallback item")
                             # debug removed: manual_filters_list.count_after_fallback
@@ -4290,24 +4940,80 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         Permite editar operador e valores. Ao salvar, atualiza `self._param_filters` e a visualização.
         """
         try:
-            sel = self.filters_list.selectedItems()
-            if not sel:
-                QMessageBox.information(self, "Informação", "Selecione exatamente um filtro para editar.")
+            sels = self.columns_list.selectedItems()
+            if sels and len(sels) > 1:
+                for it in sels:
+                    try:
+                        # pular grupos (itens top-level com filhos)
+                        if hasattr(it, 'childCount') and callable(it.childCount) and it.childCount() > 0:
+                            continue
+                        self.add_column_to_where(it)
+                    except Exception:
+                        continue
                 return
-            if len(sel) > 1:
-                QMessageBox.information(self, "Informação", "Selecione apenas um filtro para editar.")
-                return
-            item = sel[0]
-            data = item.data(Qt.UserRole)
-            if not data or not isinstance(data, (list, tuple)):
-                QMessageBox.warning(self, "Aviso", "Filtro inválido para edição.")
-                return
-            # support stored formats: (expr, params) or (expr, params, meta)
-            expr = data[0] if len(data) > 0 else None
-            params = data[1] if len(data) > 1 else []
-            meta = data[2] if len(data) > 2 else None
+            # single or no selection: if user selected columns in the columns_list,
+            # delegate to add_column_to_where for those. Otherwise, attempt to
+            # edit the currently selected filter in `self.filters_list`.
+            try:
+                if sels and len(sels) == 1:
+                    it = sels[0]
+                    if not (hasattr(it, 'childCount') and callable(it.childCount) and it.childCount() > 0):
+                        self.add_column_to_where(it)
+                        return
+                elif sels and len(sels) > 1:
+                    for it in sels:
+                        try:
+                            if hasattr(it, 'childCount') and callable(it.childCount) and it.childCount() > 0:
+                                continue
+                            self.add_column_to_where(it)
+                        except Exception:
+                            continue
+                    return
+            except Exception:
+                pass
 
-            # tenta inferir field e operador a partir da expressão parametrizada
+            # obter item selecionado na lista de filtros para edição
+            try:
+                item = getattr(self, 'filters_list', None)
+                if item is None:
+                    QMessageBox.information(self, 'Informação', 'Nenhum filtro selecionado para edição.')
+                    return
+                item = self.filters_list.currentItem()
+                if item is None:
+                    QMessageBox.information(self, 'Informação', 'Nenhum filtro selecionado para edição.')
+                    return
+            except Exception:
+                QMessageBox.information(self, 'Informação', 'Nenhum filtro selecionado para edição.')
+                return
+
+            # extrair expressão/params/meta/connector do UserRole (compatível com _refresh_filters_list)
+            expr = None; params = None; meta = None; connector = 'AND'
+            try:
+                data = item.data(Qt.UserRole)
+                if isinstance(data, (list, tuple)):
+                    if len(data) >= 1:
+                        expr = data[0]
+                    if len(data) >= 2:
+                        params = data[1]
+                    if len(data) >= 3:
+                        meta = data[2]
+                    if len(data) >= 4:
+                        connector = data[3]
+                elif isinstance(data, dict):
+                    expr = data.get('expr')
+                    params = data.get('params')
+                    meta = data.get('meta')
+                    connector = data.get('connector', 'AND')
+            except Exception:
+                expr = None; params = None; meta = None; connector = 'AND'
+
+            if not expr:
+                # tentar usar o preview textual do item (quando UserRole não estiver preenchido)
+                try:
+                    expr = item.text() or (getattr(item, 'data', lambda k: None)(Qt.UserRole) or '')
+                except Exception:
+                    expr = ''
+
             field = expr
             op = None
             m = re.search(r"\bBETWEEN\b", expr, re.IGNORECASE)
@@ -4887,6 +5593,63 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         """
         try:
             mode = mode if mode in ('metadados', 'manual') else 'metadados'
+            # detectar modo atual; confirmar troca apenas se houver mudança real
+            old_mode = getattr(self, 'modo_consulta', 'metadados')
+            changed = (mode != old_mode)
+
+            # se preferência do usuário solicitar confirmação (padrão: True)
+            try:
+                confirm_pref = bool(self._load_user_pref('confirm_mode_switch', True))
+            except Exception:
+                confirm_pref = True
+
+            if changed and confirm_pref:
+                try:
+                    has_unsaved = False
+                    # verificar elementos que indicam trabalho em andamento
+                    try:
+                        if hasattr(self, 'selected_tables_list') and self.selected_tables_list.count() > 0:
+                            has_unsaved = True
+                    except Exception:
+                        pass
+                    try:
+                        if hasattr(self, 'selected_columns_list') and self.selected_columns_list.count() > 0:
+                            has_unsaved = True
+                    except Exception:
+                        pass
+                    try:
+                        if hasattr(self, 'where_input') and self.where_input.toPlainText().strip():
+                            has_unsaved = True
+                    except Exception:
+                        pass
+                    try:
+                        if getattr(self, '_param_filters', None):
+                            if len(self._param_filters) > 0:
+                                has_unsaved = True
+                    except Exception:
+                        pass
+
+                    if has_unsaved:
+                        resp = QMessageBox.question(
+                            self,
+                            'Confirmar troca de modo',
+                            'Ao alternar de modo, alterações não salvas serão perdidas. Deseja continuar?',
+                            QMessageBox.Yes | QMessageBox.No
+                        )
+                        if resp != QMessageBox.Yes:
+                            # restaurar seleção dos rádios (não aplicar mudança)
+                            try:
+                                if hasattr(self, 'mode_meta_radio'):
+                                    self.mode_meta_radio.setChecked(old_mode == 'metadados')
+                                if hasattr(self, 'mode_manual_radio'):
+                                    self.mode_manual_radio.setChecked(old_mode != 'metadados')
+                            except Exception:
+                                pass
+                            return
+                except Exception:
+                    pass
+
+            # aplicar novo modo (mesmo que não tenha sido alterado) para garantir consistência visual
             self.modo_consulta = mode
             is_meta = (mode == 'metadados')
 
@@ -4965,6 +5728,14 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                                 pass
                     except Exception:
                         pass
+                except Exception:
+                    pass
+                # esconder botões de desfazer/refazer WHERE no modo pré-definida
+                try:
+                    if hasattr(self, 'btn_undo_where'):
+                        self.btn_undo_where.setVisible(not is_meta)
+                    if hasattr(self, 'btn_redo_where'):
+                        self.btn_redo_where.setVisible(not is_meta)
                 except Exception:
                     pass
             except Exception:
@@ -5049,6 +5820,72 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 except Exception:
                     pass
 
+                # limpar campos/manipulações adicionais (tudo que possa reter
+                # estado manual) para evitar misturar estados entre os modos
+                try:
+                    # limpar área de WHERE/filters
+                    if hasattr(self, 'where_input'):
+                        try:
+                            self.where_input.clear()
+                        except Exception:
+                            pass
+
+                    # limpar pesquisa
+                    if hasattr(self, 'table_search'):
+                        try:
+                            self.table_search.clear()
+                        except Exception:
+                            pass
+                    if hasattr(self, 'column_search'):
+                        try:
+                            self.column_search.clear()
+                        except Exception:
+                            pass
+
+                    # limpar listas/árvores de colunas/tabelas
+                    if hasattr(self, 'tables_list'):
+                        try:
+                            # pode ser QListWidget/QTreeWidget
+                            self.tables_list.clearSelection()
+                        except Exception:
+                            try:
+                                self.tables_list.clear()
+                            except Exception:
+                                pass
+
+                    if hasattr(self, 'columns_list'):
+                        try:
+                            # QTreeWidget or QListWidget
+                            self.columns_list.clear()
+                        except Exception:
+                            try:
+                                self.columns_list.clearItems()
+                            except Exception:
+                                pass
+
+                    if hasattr(self, 'selected_tables_list'):
+                        try:
+                            self.selected_tables_list.clear()
+                        except Exception:
+                            pass
+                    if hasattr(self, 'selected_columns_list'):
+                        try:
+                            self.selected_columns_list.clear()
+                        except Exception:
+                            pass
+
+                    # garantir que filtros parametrizados estejam limpos
+                    try:
+                        self._param_filters = []
+                    except Exception:
+                        pass
+                    try:
+                        self._refresh_filters_list()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
                 try:
                     self.where_input.clear()
                 except Exception:
@@ -5077,7 +5914,52 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 self.updateGeometry()
             except Exception:
                 pass
+            # atualizar habilitação dos botões de ação conforme modo/seleção
+            try:
+                try:
+                    self._update_action_buttons_state()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        except Exception:
+            pass
 
+    def _update_action_buttons_state(self):
+        """Habilita/desabilita botões de ação quando em modo manual conforme
+        houver pelo menos uma tabela selecionada.
+
+        Regras:
+        - Se modo == 'manual' então btn_execute, btn_save, btn_load, btn_delete,
+          btn_manage são habilitados apenas quando existir >= 1 tabela em
+          `self.selected_tables_list`.
+        - Em modo 'metadados' mantemos os botões habilitados normalmente.
+        """
+        try:
+            modo = getattr(self, 'modo_consulta', 'metadados')
+            is_manual = (modo == 'manual')
+            has_tables = False
+            try:
+                has_tables = (self.selected_tables_list.count() > 0)
+            except Exception:
+                has_tables = False
+
+            # lista de botões a controlar (inclui gerar/atualizar)
+            # Esses botões são específicos do modo manual e devem ficar desabilitados
+            # quando estamos em modo 'metadados' para evitar ações inválidas.
+            btn_names = ['btn_generate', 'btn_execute', 'btn_save', 'btn_load', 'btn_delete', 'btn_manage']
+            for name in btn_names:
+                try:
+                    if hasattr(self, name):
+                        btn = getattr(self, name)
+                        if is_manual:
+                            # em modo manual: habilitar apenas quando há tabelas selecionadas
+                            btn.setEnabled(bool(has_tables))
+                        else:
+                            # em modo metadados (predefinido): desabilitar completamente
+                            btn.setEnabled(False)
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -5152,6 +6034,82 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
 
             # Execute the query in a worker thread to keep the UI responsive and
             # show a progress dialog / timer while the query runs.
+            # --- Validação adicional (modo manual): se a tabela principal tiver
+            # colunas de data e nenhuma delas aparece no SQL/WHERE, avisar o usuário ---
+            try:
+                modo = getattr(self, 'modo_consulta', None)
+                if modo == 'manual' and self.selected_tables_list.count() > 0:
+                    main_item = self.selected_tables_list.item(0)
+                    if main_item:
+                        try:
+                            main_raw = self._get_selected_table_raw_text(main_item)
+                            parts = main_raw.split('.')
+                            main_schema = parts[0].strip('[]')
+                            main_table = parts[1].split('(')[0].strip()
+                            cols = self._get_columns_cached(main_schema, main_table) or []
+                            date_cols = [c.column_name for c in cols if getattr(c, 'data_type', None) and any(x in (c.data_type or '').lower() for x in ('date', 'time', 'datetime', 'timestamp', 'smalldatetime'))]
+                            if date_cols:
+                                sql_text = exec_sql or ''
+                                found = False
+                                # compute aliases for selected tables to detect alias.column usage
+                                try:
+                                    aliases_map = self._compute_aliases_for_selected_tables()
+                                except Exception:
+                                    aliases_map = {}
+
+                                def _ident(name: str) -> str:
+                                    # matches either [name] or name (no quotes)
+                                    return r'(?:\[' + re.escape(name) + r'\]|' + re.escape(name) + r')'
+
+                                for dc in date_cols:
+                                    if not dc:
+                                        continue
+                                    try:
+                                        col = (dc or '').strip()
+                                        # patterns to match:
+                                        # 1) simple column name (word boundary)
+                                        pats = [r'\b' + re.escape(col) + r'\b']
+                                        # 2) table.column and [table].[column]
+                                        try:
+                                            t = main_table
+                                            s = main_schema
+                                            if t:
+                                                pats.append(r'\b' + _ident(t) + r"\s*\.\s*" + _ident(col))
+                                            if s and t:
+                                                pats.append(r'\b' + _ident(s) + r"\s*\.\s*" + _ident(t) + r"\s*\.\s*" + _ident(col))
+                                        except Exception:
+                                            pass
+                                        # 3) alias.column (if alias exists for main table)
+                                        try:
+                                            alias = aliases_map.get((main_schema, main_table))
+                                            if alias:
+                                                pats.append(r'\b' + re.escape(alias) + r"\s*\.\s*" + _ident(col))
+                                        except Exception:
+                                            pass
+
+                                        # search any pattern case-insensitively in the SQL text
+                                        for p in pats:
+                                            try:
+                                                if re.search(p, sql_text, flags=re.IGNORECASE):
+                                                    found = True
+                                                    break
+                                            except Exception:
+                                                continue
+                                        if found:
+                                            break
+                                    except Exception:
+                                        continue
+                                if not found:
+                                    reply = QMessageBox.question(self, 'Filtro de data ausente',
+                                        "A tabela principal contém colunas de data e nenhum filtro de data foi encontrado no WHERE.\n" +
+                                        "A consulta pode retornar muitos registros e demorar. Deseja continuar?",
+                                        QMessageBox.Yes | QMessageBox.No)
+                                    if reply == QMessageBox.No:
+                                        return
+                        except Exception:
+                            pass
+            except Exception:
+                pass
             progress = QProgressDialog("Executando consulta...", None, 0, 0, self)
             progress.setWindowTitle("Executando")
             progress.setWindowModality(Qt.ApplicationModal)
@@ -5162,6 +6120,12 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             progress.setMinimumDuration(0)
             progress.show()
             QApplication.processEvents()
+            try:
+                # guarda a referência para ser fechada apenas após a UI principal
+                # ter processado o sinal de resultados
+                self._current_progress = progress
+            except Exception:
+                self._current_progress = None
 
             class _QueryWorker(QThread):
                 finished_signal = pyqtSignal(list, list)
@@ -5184,20 +6148,18 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
 
             def _on_worker_finished(cols, rows):
                 try:
+                    # Não fechamos o diálogo de progresso aqui — a MainWindow irá
+                    # fechar e notificar o usuário depois de trocar para a aba
+                    # de resultados. Registramos apenas o log aqui.
                     if getattr(self, 'session_logger', None):
                         try:
                             self.session_logger.log('execute_query_success', f'Retorno {len(rows)} registros', {'rows': len(rows)})
                         except Exception:
                             pass
-                    progress.close()
                 except Exception:
                     pass
                 try:
                     self.query_executed.emit(cols, rows)
-                except Exception:
-                    pass
-                try:
-                    QMessageBox.information(self, "Sucesso", f"Consulta executada com sucesso!\n{len(rows)} registros retornados.")
                 except Exception:
                     pass
                 try:
@@ -5207,7 +6169,14 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
 
             def _on_worker_error(msg):
                 try:
-                    progress.close()
+                    try:
+                        progress.close()
+                    except Exception:
+                        pass
+                    try:
+                        self._current_progress = None
+                    except Exception:
+                        pass
                 except Exception:
                     pass
                 QMessageBox.critical(self, "Erro", f"Erro ao executar consulta:\n{msg}")
@@ -5221,6 +6190,40 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             worker.start()
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao executar consulta:\n{str(e)}")
+    
+    def close_progress_and_notify_success(self, rows_count: int | None = None):
+        """Fecha o diálogo de progresso (se existir) e notifica o usuário.
+
+        Projetado para ser chamado pelo MainWindow depois que a aba de
+        resultados for atualizada.
+        """
+        try:
+            try:
+                if getattr(self, '_current_progress', None):
+                    try:
+                        self._current_progress.close()
+                    except Exception:
+                        pass
+                    self._current_progress = None
+            except Exception:
+                self._current_progress = None
+        except Exception:
+            pass
+
+        try:
+            if getattr(self, 'session_logger', None):
+                try:
+                    c = int(rows_count) if rows_count is not None else 0
+                    self.session_logger.log('execute_query_success_notify', f'Retorno {c} registros', {'rows': c})
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            QMessageBox.information(self, "Resultado", f"Consulta executada com sucesso!\n{rows_count or 0} registros retornados.")
+        except Exception:
+            pass
     
     def save_query(self):
         """Salva a consulta atual"""
@@ -5308,12 +6311,19 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 if reply == QMessageBox.No:
                     return
             
-            # Salva
+            # Salva (adiciona tag indicando tipo de consulta: 'M' manual, 'P' pré-definida)
+            try:
+                modo = getattr(self, 'modo_consulta', 'metadados')
+                tag = 'M' if modo == 'manual' else 'P'
+            except Exception:
+                tag = 'P'
+
             self.qm.add_query(
                 name=name,
                 sql=sql,
                 description=description,
                 created_by="Usuario",  # Pode passar o usuário logado
+                tags=[tag],
                 overwrite=(existing is not None)
             )
             try:
@@ -5328,7 +6338,14 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
     
     def load_query(self):
         """Carrega uma consulta salva"""
-        queries = self.qm.list_queries()
+        # listar apenas consultas compatíveis com o modo atual (M ou P)
+        try:
+            modo = getattr(self, 'modo_consulta', 'metadados')
+            tag = 'M' if modo == 'manual' else 'P'
+        except Exception:
+            tag = None
+
+        queries = self.qm.list_queries(tag=tag) if tag else self.qm.list_queries()
         
         if not queries:
             QMessageBox.information(self, "Informação", "Nenhuma consulta salva encontrada")
@@ -5366,7 +6383,12 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
 
     def delete_query(self):
         """Exclui uma consulta (prompt simples) via QueryBuilderTab."""
-        queries = self.qm.list_queries()
+        try:
+            modo = getattr(self, 'modo_consulta', 'metadados')
+            tag = 'M' if modo == 'manual' else 'P'
+        except Exception:
+            tag = None
+        queries = self.qm.list_queries(tag=tag) if tag else self.qm.list_queries()
         if not queries:
             QMessageBox.information(self, "Informação", "Nenhuma consulta salva encontrada")
             return
@@ -5420,6 +6442,55 @@ class ManageQueriesDialog(QDialog):
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
+
+        # Criar widgets básicos (garantia de atributos) — alguns podem ser
+        # preenchidos/estendidos posteriormente pela lógica de carregamento.
+        try:
+            # Coluna esquerda - fontes
+            self.lbl_fontes = QLabel("📂 Fontes de dados")
+            self.txt_pesquisar_fontes = QLineEdit()
+            self.txt_pesquisar_fontes.setPlaceholderText("Pesquisar fontes...")
+            self.lst_fontes = QListWidget()
+            self.lbl_fontes_escolhidas = QLabel("📌 Fontes de dados escolhidas")
+            self.lst_fontes_escolhidas = QListWidget()
+            self.btn_remover_fonte = QPushButton("➖ Remover fonte")
+            self.btn_limpar_tudo = QPushButton("🧹 Limpar tudo")
+
+            # Coluna central - informações
+            self.lbl_info_disp = QLabel("🧩 Informações disponíveis")
+            self.txt_pesquisar_info = QLineEdit()
+            self.txt_pesquisar_info.setPlaceholderText("Pesquisar informações...")
+            self.lst_info_disp = QListWidget()
+            self.btn_marcar_todas = QPushButton("✔️ Marcar todas")
+            self.btn_desmarcar_todas = QPushButton("✖️ Desmarcar todas")
+            self.btn_adicionar_info = QPushButton("➕ Adicionar informações")
+            self.lbl_info_relatorio = QLabel("✅ Informações que aparecerão no relatório")
+            self.lst_info_relatorio = QListWidget()
+            self.btn_remover_info = QPushButton("➖ Remover informação")
+            self.lbl_modulo = QLabel("Módulo")
+            self.combo_modulo = QComboBox()
+            self.lbl_filtros = QLabel("Filtros")
+            self.grp_filtros_rapidos = QGroupBox("Filtros rápidos")
+            self.grp_gerenciar_filtros = QGroupBox("Gerenciar filtros")
+
+            # Coluna direita - SQL e ações
+            self.lbl_modo_consulta = QLabel("Modo de consulta")
+            self.combo_relacionamento = QComboBox()
+            self.lbl_sql = QLabel("SQL")
+            self.txt_sql = QTextEdit()
+
+            # botões de ação no diálogo
+            self.btn_gerar_consulta = QPushButton("🧩 Gerar consulta")
+            self.btn_executar_consulta = QPushButton("▶️ Executar consulta")
+            self.btn_salvar_consulta = QPushButton("💾 Salvar consulta")
+            self.btn_carregar_consulta = QPushButton("📂 Carregar consulta")
+            self.btn_excluir_consulta = QPushButton("🗑️ Excluir consulta")
+            self.btn_gerenciar_consultas = QPushButton("🔧 Gerenciar consultas")
+
+            # lista principal usada por alguns helpers
+            self.list_widget = QListWidget()
+        except Exception:
+            pass
 
         # ===== Abas =====
         self.tabs = QTabWidget()
@@ -5594,7 +6665,12 @@ class ManageQueriesDialog(QDialog):
 
     def delete_query(self):
         """Exclui uma consulta salva do armazenamento (arquivo consultas.json)."""
-        queries = self.qm.list_queries()
+        try:
+            modo = getattr(self, 'modo_consulta', 'metadados')
+            tag = 'M' if modo == 'manual' else 'P'
+        except Exception:
+            tag = None
+        queries = self.qm.list_queries(tag=tag) if tag else self.qm.list_queries()
         if not queries:
             QMessageBox.information(self, "Informação", "Nenhuma consulta salva encontrada")
             return
@@ -6493,6 +7569,16 @@ class MainWindow(QMainWindow):
                     tw = self.centralWidget().findChild(QTabWidget)
                     if tw is not None:
                         tw.setCurrentIndex(1)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # fechar o diálogo de progresso que pertence à aba de consulta e
+        # notificar o usuário após a troca de aba
+        try:
+            if hasattr(self, 'query_tab') and getattr(self, 'query_tab') is not None:
+                try:
+                    self.query_tab.close_progress_and_notify_success(len(data) if data is not None else 0)
                 except Exception:
                     pass
         except Exception:

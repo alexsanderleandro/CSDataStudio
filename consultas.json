@@ -1,1 +1,24 @@
-{}
+{
+  "Vendas 12/2025": {
+    "name": "Vendas 12/2025",
+    "sql": "SELECT\n            FORMAT(cns.DataMovimento, 'yyyy-MM') AS MesAno, cns.CodVendedor, cns.CodCliente, cns.CodProduto, cns.CodRegiao, cns.NomeEmpresa, SUM(cns.TotalProduto) AS [TotalProduto], SUM(cns.Quantidade) AS [Quantidade]\n        FROM [dbo].[CnsVendasRefPeriodo] cns\n        \nINNER JOIN [dbo].[Clientes] cli ON cns.CodCliente = cli.CodCliente\nINNER JOIN [dbo].[Vendedores] ven ON cns.CodVendedor = ven.CodVendedor\nINNER JOIN [dbo].[Produtos] pro ON cns.CodProduto = pro.CodProduto\nINNER JOIN [dbo].[Empresas] emp ON cns.CodEmpresa = emp.CodEmpresa\nINNER JOIN [dbo].[Regioes] reg ON cns.CodRegiao = reg.CodRegiao\nINNER JOIN [dbo].[GrupoEstoque] gru ON cns.CodGrupo = gru.CodGrupo\nWHERE DataMovimento >= '12-01-2025'\nGROUP BY FORMAT(cns.DataMovimento, 'yyyy-MM'), cns.CodVendedor, cns.CodCliente, cns.CodProduto, cns.CodRegiao, cns.NomeEmpresa",
+    "description": "",
+    "created_at": "2025-12-29 17:43:51",
+    "modified_at": "2025-12-29 17:43:51",
+    "created_by": "Usuario",
+    "tags": [
+      "P"
+    ]
+  },
+  "Contas a pagar 2025": {
+    "name": "Contas a pagar 2025",
+    "sql": "SELECT aPagar.CodEmpresa, aPagar.Numero, aPagar.NomeCredor FROM [dbo].[aPagar] WHERE [dbo].[aPagar].[DataEmissao] >= '1-12-2025'",
+    "description": "",
+    "created_at": "2025-12-29 17:44:33",
+    "modified_at": "2025-12-29 17:44:33",
+    "created_by": "Usuario",
+    "tags": [
+      "M"
+    ]
+  }
+}
