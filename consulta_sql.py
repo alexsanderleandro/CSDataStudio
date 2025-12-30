@@ -161,15 +161,36 @@ class QueryBuilder:
 
         # Dimensões
         for dim in agrupamento.get("dimensoes", []):
-            if isinstance(dim, dict) and dim.get("tipo") == "mes_ano":
-                campo = dim["campo"]
-                qcampo = qualify_field(campo)
-                expr = f"FORMAT({qcampo}, 'yyyy-MM')"
-                select_parts.append(f"{expr} AS MesAno")
-                group_by_parts.append(expr)
+            if isinstance(dim, dict):
+                campo = dim.get("campo")
+                tipo = dim.get("tipo")
+                tabela = dim.get("tabela")
+                if tipo == "mes_ano":
+                    qcampo = qualify_field(campo)
+                    expr = f"FORMAT({qcampo}, 'yyyy-MM')"
+                    select_parts.append(f"{expr} AS MesAno")
+                    group_by_parts.append(expr)
+                elif tabela:
+                    # tenta usar alias se disponível
+                    alias = None
+                    if aliases:
+                        for (sch, tbl), a in aliases.items():
+                            if tbl.lower() == tabela.lower():
+                                alias = a
+                                break
+                    if alias:
+                        qcampo = f"{alias}.{campo}"
+                    else:
+                        qcampo = f"{tabela}.{campo}"
+                    select_parts.append(qcampo)
+                    group_by_parts.append(qcampo)
+                else:
+                    qcampo = qualify_field(campo)
+                    select_parts.append(qcampo)
+                    group_by_parts.append(qcampo)
             else:
                 # dim pode ser string simples ou já qualificado
-                q = qualify_field(dim) if isinstance(dim, str) else dim
+                q = qualify_field(dim)
                 select_parts.append(q)
                 group_by_parts.append(q)
 

@@ -43,6 +43,63 @@
           "on": "[dbo].[CnsVendasRefPeriodo].CodGrupo = [dbo].[GrupoEstoque].CodGrupo"
         }
       ]
+    },
+    {
+      "id": "por_nomevendedor",
+      "label": "Vendas por Nome do Vendedor",
+      "tabela": "[dbo].[CnsVendasRefPeriodo]",
+      "dimensoes": [
+        { "campo": "DataMovimento", "tipo": "mes_ano"  },
+        "NomeVendedor"
+      ],
+      "metricas": [
+        { "campo": "TotalProduto", "funcao": "SUM", "label": "TotalProduto" },
+        { "campo": "Quantidade", "funcao": "SUM", "label": "Quantidade" }
+      ],
+      "joins": [
+        {
+          "tabela": "[dbo].[Vendedores]",
+          "on": "[dbo].[CnsVendasRefPeriodo].CodVendedor = [dbo].[Vendedores].CodVendedor"
+        }
+      ]
+    },
+    {
+      "id": "por_nomecliente",
+      "label": "Vendas por Nome do Cliente",
+      "tabela": "[dbo].[CnsVendasRefPeriodo]",
+      "dimensoes": [
+        { "campo": "DataMovimento", "tipo": "mes_ano" },
+        { "campo": "NomeCliente", "tabela": "Clientes" }
+      ],
+      "metricas": [
+        { "campo": "TotalProduto", "funcao": "SUM", "label": "TotalProduto" },
+        { "campo": "Quantidade", "funcao": "SUM", "label": "Quantidade" }
+      ],
+      "joins": [
+        {
+          "tabela": "[dbo].[Clientes]",
+          "on": "[dbo].[CnsVendasRefPeriodo].CodCliente = [dbo].[Clientes].CodCliente"
+        }
+      ]
+    },
+    {
+      "id": "por_nomegrupo",
+      "label": "Vendas por Nome do Grupo",
+      "tabela": "[dbo].[CnsVendasRefPeriodo]",
+      "dimensoes": [
+        { "campo": "DataMovimento", "tipo": "mes_ano" },
+        { "campo": "NomeGrupo", "tabela": "GrupoEstoque" }
+      ],
+      "metricas": [
+        { "campo": "TotalProduto", "funcao": "SUM", "label": "TotalProduto" },
+        { "campo": "Quantidade", "funcao": "SUM", "label": "Quantidade" }
+      ],
+      "joins": [
+        {
+          "tabela": "[dbo].[GrupoEstoque]",
+          "on": "[dbo].[CnsVendasRefPeriodo].CodGrupo = [dbo].[GrupoEstoque].CodGrupo"
+        }
+      ]
     }
   ]
 }
