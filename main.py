@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtWidgets import QSizePolicy
 from numbers import Number
+import time
 import logging
 import sys
 import os
@@ -1256,10 +1257,8 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         # Abrir o gerenciador de consultas da janela principal (MainWindow)
         # Conexão comentada por solicitação do usuário — rotina desativada.
         # btn_manage.clicked.connect(lambda: (self.window().open_manage_queries() if hasattr(self.window(), 'open_manage_queries') else None))
-        #try:
-        #    btn_manage.setEnabled(False)
-        #    btn_manage.setToolTip('Desativado temporariamente')
-        #except Exception:
+    #try:
+    #    pass
         #btn_manage.setMinimumWidth(140)
         #btn_manage.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         #action_layout.addWidget(btn_manage)
@@ -1471,7 +1470,7 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 self.tables_list.addItem(it)
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao carregar tabelas:\n{str(e)}")
-
+                
     def _update_filters_list_max_height(self):
         """Calcula e aplica uma altura máxima para `self.filters_list` com base
         na altura atual do widget, evitando que a lista ocupe todo o espaço
@@ -1654,13 +1653,78 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     display = f"{idx}: {raw} [{join_type}]"
                 li = QListWidgetItem(display)
                 li.setData(Qt.UserRole, raw)
-                # armazenar join_type em role adicional
+                # preparar prior_tables (tabelas já presentes)
                 try:
-                    li.setData(Qt.UserRole + 1, join_type)
+                    prior_tables = []
+                    for ii in range(self.selected_tables_list.count()):
+                        existing_raw2 = self._get_selected_table_raw_text(self.selected_tables_list.item(ii))
+                        parts2 = existing_raw2.split('.')
+                        ps = parts2[0].strip('[]')
+                        pt = parts2[1].split('(')[0].strip()
+                        prior_tables.append((ps, pt))
                 except Exception:
-                    pass
-                self.selected_tables_list.addItem(li)
-                existing_raw.append(raw)
+                    prior_tables = []
+
+                # se for join e houver tabelas anteriores, pedir ON antes de adicionar
+                if join_type and prior_tables:
+                    try:
+                        parts = raw.split('.')
+                        cur_schema = parts[0].strip('[]')
+                        cur_table = parts[1].split('(')[0].strip()
+                        user_on = self._ask_user_for_join_on(prior_tables, (cur_schema, cur_table), join_type)
+                        if user_on:
+                            li.setData(Qt.UserRole + 2, user_on)
+                            # marcar item e registrar join_type
+                            try:
+                                marker = f"pending_{time.time()}"
+                                li.setData(Qt.UserRole + 99, marker)
+                            except Exception:
+                                marker = None
+                            try:
+                                li.setData(Qt.UserRole + 1, join_type)
+                            except Exception:
+                                pass
+                            self.selected_tables_list.addItem(li)
+                            existing_raw.append(raw)
+                            try:
+                                if getattr(self, 'modo_consulta', 'metadados') == 'manual':
+                                    try:
+                                        self.generate_sql_manual()
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                        else:
+                            # usuário cancelou -> pular adicionar esta tabela
+                            continue
+                    except Exception:
+                        # em caso de erro, pular esta tabela
+                        continue
+                else:
+                    # sem join type ou sem prior_tables: adicionar normalmente
+                    try:
+                        try:
+                            marker = f"pending_{time.time()}"
+                            li.setData(Qt.UserRole + 99, marker)
+                        except Exception:
+                            marker = None
+                        try:
+                            li.setData(Qt.UserRole + 1, join_type)
+                        except Exception:
+                            pass
+                        self.selected_tables_list.addItem(li)
+                        existing_raw.append(raw)
+                        # após adicionar a tabela, atualizar SQL automaticamente
+                        try:
+                            if getattr(self, 'modo_consulta', 'metadados') == 'manual':
+                                try:
+                                    self.generate_sql_manual()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
         # renumerar para garantir sequência correta
         self._renumber_selected_tables()
         
@@ -1676,6 +1740,15 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             )
             self.update_available_columns()
             self._renumber_selected_tables()
+            try:
+                in_manual = (getattr(self, 'modo_consulta', None) == 'manual') or (getattr(self, '_manual_panel', None) is not None and getattr(self, '_manual_panel').isVisible())
+                if in_manual:
+                    try:
+                        self.generate_sql_manual()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
     
     def clear_selection(self):
         """Limpa toda a seleção"""
@@ -1688,6 +1761,11 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         self._param_filters = []
         try:
             self._refresh_filters_list()
+        except Exception:
+            pass
+        try:
+            if getattr(self, 'modo_consulta', 'metadados') == 'manual':
+                self.generate_sql_manual()
         except Exception:
             pass
     
@@ -1768,79 +1846,6 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             except Exception as e:
                 print(f"Erro ao carregar colunas de {table_name}: {e}")
 
-
-    def _compute_aliases_for_selected_tables(self) -> dict:
-        """Cria um mapa (schema,table) -> alias usando a mesma heurística do QueryBuilder.
-        Retorna um dict onde a chave é (schema, table) e o valor é o alias (string).
-        """
-        aliases = {}
-        used_aliases = {}
-
-        def make_alias_short(table_name: str) -> str:
-            base = ''.join([c for c in table_name if c.isalnum()])[:3].lower() or 't'
-            if base not in used_aliases:
-                used_aliases[base] = 1
-                return base
-            else:
-                used_aliases[base] += 1
-                return f"{base}{used_aliases[base]}"
-
-        def make_alias_desc(table_name: str) -> str:
-            base = ''.join([c for c in table_name if c.isalnum()]).lower()[:30] or 't'
-            if base not in used_aliases:
-                used_aliases[base] = 1
-                return base
-            else:
-                used_aliases[base] += 1
-                return f"{base}{used_aliases[base]}"
-
-        # decide maker based on combo
-        style = self.alias_style_combo.currentText() if hasattr(self, 'alias_style_combo') else 'Curto (apg,cli)'
-        maker = make_alias_short if style.lower().startswith('curto') else make_alias_desc
-
-        for i in range(self.selected_tables_list.count()):
-            t = self._get_selected_table_raw_text(self.selected_tables_list.item(i))
-            parts = t.split('.')
-            schema = parts[0].strip('[]')
-            table_name = parts[1].split('(')[0].strip()
-            aliases[(schema, table_name)] = maker(table_name)
-
-        return aliases
-
-    def _make_aliases_for_tables(self, tables: list) -> dict:
-        """Gera um mapa (schema,table) -> alias para uma lista de tuplas (schema,table).
-
-        Reutiliza a mesma heurística usada por `_compute_aliases_for_selected_tables`.
-        """
-        aliases = {}
-        used_aliases = {}
-
-        def make_alias_short(table_name: str) -> str:
-            base = ''.join([c for c in table_name if c.isalnum()])[:3].lower() or 't'
-            if base not in used_aliases:
-                used_aliases[base] = 1
-                return base
-            else:
-                used_aliases[base] += 1
-                return f"{base}{used_aliases[base]}"
-
-        def make_alias_desc(table_name: str) -> str:
-            base = ''.join([c for c in table_name if c.isalnum()]).lower()[:30] or 't'
-            if base not in used_aliases:
-                used_aliases[base] = 1
-                return base
-            else:
-                used_aliases[base] += 1
-                return f"{base}{used_aliases[base]}"
-
-        style = self.alias_style_combo.currentText() if hasattr(self, 'alias_style_combo') else 'Curto (apg,cli)'
-        maker = make_alias_short if style.lower().startswith('curto') else make_alias_desc
-
-        for schema, table_name in tables:
-            aliases[(schema, table_name)] = maker(table_name)
-
-        return aliases
-
     def _get_selected_table_raw_text(self, item: QListWidgetItem) -> str:
         """Retorna o texto 'raw' (sem prefixo numérico) de um item de selected_tables_list.
         Se o UserRole estiver preenchido, retorna-o; senão tenta remover um prefixo numérico no formato 'N: '.
@@ -1884,19 +1889,82 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             item.setText(display)
             item.setData(Qt.UserRole, raw)
 
+    def _compute_aliases_for_selected_tables(self):
+        """Gera um mapa de aliases curtos/descrítivos para as tabelas selecionadas.
+
+        Retorna dict com chaves (schema, table_name) -> alias (str) ou None quando
+        a opção 'Nenhum' estiver selecionada.
+        """
+        aliases = {}
+        used_aliases = {}
+        tables = []
+        for i in range(self.selected_tables_list.count()):
+            try:
+                raw = self._get_selected_table_raw_text(self.selected_tables_list.item(i))
+                parts = raw.split('.')
+                schema = parts[0].strip('[]')
+                table_name = parts[1].split('(')[0].strip()
+                tables.append((schema, table_name))
+            except Exception:
+                continue
+
+        def make_alias_short(table_name: str) -> str:
+            base = ''.join([c for c in table_name if c.isalnum()])[:3].lower() or 't'
+            if base not in used_aliases:
+                used_aliases[base] = 1
+                return base
+            else:
+                used_aliases[base] += 1
+                return f"{base}{used_aliases[base]}"
+
+        def make_alias_desc(table_name: str) -> str:
+            base = ''.join([c for c in table_name if c.isalnum()]).lower()[:30] or 't'
+            if base not in used_aliases:
+                used_aliases[base] = 1
+                return base
+            else:
+                used_aliases[base] += 1
+                return f"{base}{used_aliases[base]}"
+
+        style = self.alias_style_combo.currentText() if hasattr(self, 'alias_style_combo') else 'Curto (apg,cli)'
+        st = (style or '').lower()
+        if 'nenhum' in st:
+            maker = lambda t: None
+        elif st.startswith('curto'):
+            maker = make_alias_short
+        else:
+            maker = make_alias_desc
+
+        for schema, table_name in tables:
+            try:
+                aliases[(schema, table_name)] = maker(table_name)
+            except Exception:
+                aliases[(schema, table_name)] = None
+
+        return aliases
+
     def toggle_selected_table(self, item: QListWidgetItem):
         """Ao clicar numa tabela na lista principal, alterna sua presença em selected_tables_list."""
         try:
-            # Ao selecionar uma tabela, limpar imediatamente a lista de informações
-            # disponíveis (evita que colunas de seleção anterior permaneçam visíveis
-            # enquanto atualizamos a seleção). Isso é desejado no modo Manual.
-            try:
-                if getattr(self, 'columns_list', None):
-                    self.columns_list.clear()
-            except Exception:
-                pass
+            # Nota: não limpar imediatamente a lista de colunas aqui —
+            # quando abrimos o diálogo de JOIN antes de adicionar a nova tabela,
+            # limpar agora faria com que as colunas da tabela já adicionada
+            # desaparecessem enquanto o usuário define o ON (causando a
+            # impressão de que a tabela "sumiu"). Em vez disso, limpamos a
+            # lista de colunas apenas após confirmar a adição ou ao remover.
             # usar o valor bruto armazenado no UserRole quando disponível
             raw = item.data(Qt.UserRole) or item.text()
+            # DEBUG: mostrar raw do item clicado e estado atual da selected_tables_list
+            try:
+                print(f"[DEBUG] toggle_selected_table clicked raw={raw}")
+                for ii in range(self.selected_tables_list.count()):
+                    try:
+                        itx = self.selected_tables_list.item(ii)
+                        print(f"[DEBUG] selected_tables_list[{ii}] raw={self._get_selected_table_raw_text(itx)} role99={itx.data(Qt.UserRole+99)}")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             # procura se já existe
             found_index = None
             for i in range(self.selected_tables_list.count()):
@@ -1904,14 +1972,29 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     found_index = i
                     break
             if found_index is not None:
+                # DEBUG: about to remove existing selected table (toggle off)
+                try:
+                    print(f"[DEBUG] toggle_selected_table removing existing at idx={found_index} raw={self._get_selected_table_raw_text(self.selected_tables_list.item(found_index))}")
+                except Exception:
+                    pass
                 # remove
                 self.selected_tables_list.takeItem(found_index)
+                try:
+                    if getattr(self, 'columns_list', None):
+                        self.columns_list.clear()
+                except Exception:
+                    pass
                 self._renumber_selected_tables()
             else:
                 # adiciona ao final; se já houver tabela, solicitar tipo de JOIN
                 join_type = None
                 try:
                     if self.selected_tables_list.count() >= 1:
+                        # DEBUG: about to prompt for join type
+                        try:
+                            print(f"[DEBUG] about to prompt join type for raw={raw} (selected_tables_list.count={self.selected_tables_list.count()})")
+                        except Exception:
+                            pass
                         from PyQt5.QtWidgets import QInputDialog
                         options = ["INNER JOIN", "LEFT JOIN", "RIGHT JOIN"]
                         choice, ok = QInputDialog.getItem(self, "Tipo de relacionamento", f"Escolha o tipo de JOIN para {raw}:", options, 0, False)
@@ -1942,9 +2025,80 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     li.setData(Qt.UserRole + 1, join_type)
                 except Exception:
                     pass
-                self.selected_tables_list.addItem(li)
+                # marcar item com id temporário para remoção segura se o diálogo ON for cancelado
+                try:
+                    marker = f"pending_{time.time()}"
+                    li.setData(Qt.UserRole + 99, marker)
+                except Exception:
+                    marker = None
+                # antes de adicionar, preparar prior_tables para possível diálogo ON
+                # (lista de tuplas (schema,table) das tabelas já presentes)
+                try:
+                    prior_tables = []
+                    for ii in range(self.selected_tables_list.count()):
+                        existing_raw = self._get_selected_table_raw_text(self.selected_tables_list.item(ii))
+                        parts = existing_raw.split('.')
+                        ps = parts[0].strip('[]')
+                        pt = parts[1].split('(')[0].strip()
+                        prior_tables.append((ps, pt))
+                except Exception:
+                    prior_tables = []
+
+                # se foi escolhido um tipo de JOIN, abrir diálogo de ON antes de adicionar
+                try:
+                    if join_type and prior_tables:
+                        try:
+                            # current table parsed a partir do raw
+                            parts = raw.split('.')
+                            cur_schema = parts[0].strip('[]')
+                            cur_table = parts[1].split('(')[0].strip()
+                            user_on = self._ask_user_for_join_on(prior_tables, (cur_schema, cur_table), join_type)
+                            if user_on:
+                                # armazenar expressão ON para uso posterior durante a geração da SQL
+                                li.setData(Qt.UserRole + 2, user_on)
+                                # agora adicionar o item à lista (apenas após ON definido)
+                                self.selected_tables_list.addItem(li)
+                                try:
+                                    self._renumber_selected_tables()
+                                except Exception:
+                                    pass
+                                try:
+                                    self.update_available_columns()
+                                except Exception:
+                                    pass
+                                try:
+                                    if getattr(self, 'modo_consulta', 'metadados') == 'manual':
+                                        try:
+                                            self.generate_sql_manual()
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+                            else:
+                                # usuário cancelou: não adiciona nada e informa
+                                try:
+                                    QMessageBox.information(self, "Operação cancelada", f"A tabela {raw} não foi adicionada porque a definição do relacionamento (ON) foi cancelada.")
+                                except Exception:
+                                    pass
+                                return
+                        except Exception:
+                            pass
+                    else:
+                        # sem join_type ou sem prior_tables: adicionar normalmente
+                        self.selected_tables_list.addItem(li)
+                except Exception:
+                    # no erro, tentar adicionar para não perder ação do usuário
+                    try:
+                        self.selected_tables_list.addItem(li)
+                    except Exception:
+                        pass
             # atualiza colunas disponíveis com base na seleção (após limpar acima)
             self.update_available_columns()
+            try:
+                if getattr(self, 'modo_consulta', 'metadados') == 'manual':
+                    self.generate_sql_manual()
+            except Exception:
+                pass
         except Exception as e:
             print(f"Erro ao alternar seleção de tabela: {e}")
 
@@ -2855,6 +3009,15 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 self.columns_list.clearSelection()
         except Exception:
             pass
+        # atualizar SQL automaticamente (modo manual) — chamar sempre para refletir alterações
+        try:
+            if getattr(self, 'modo_consulta', 'metadados') == 'manual':
+                try:
+                    self.generate_sql_manual()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     # group-by context menu and helpers removed per user request
 
@@ -2890,6 +3053,11 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             self.selected_columns_list.takeItem(
                 self.selected_columns_list.row(current_item)
             )
+            try:
+                if getattr(self, 'modo_consulta', 'metadados') == 'manual':
+                    self.generate_sql_manual()
+            except Exception:
+                pass
 
     def move_selected_column_up(self):
         """Move a informação selecionada uma posição para cima na lista."""
@@ -2901,6 +3069,11 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             # reinserir no índice anterior
             self.selected_columns_list.insertItem(row - 1, item)
             self.selected_columns_list.setCurrentRow(row - 1)
+        except Exception:
+            pass
+        try:
+            if getattr(self, 'modo_consulta', 'metadados') == 'manual':
+                self.generate_sql_manual()
         except Exception:
             pass
 
@@ -2917,6 +3090,11 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             # ao remover, a lista encurta, então inserir em row+1 coloca após o anterior
             self.selected_columns_list.insertItem(row + 1, item)
             self.selected_columns_list.setCurrentRow(row + 1)
+        except Exception:
+            pass
+        try:
+            if getattr(self, 'modo_consulta', 'metadados') == 'manual':
+                self.generate_sql_manual()
         except Exception:
             pass
     
@@ -3386,6 +3564,15 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     table_repr = f"[{s}].[{tname}]"
 
                     if join_type and qb_local is not None:
+                        # se o usuário já definiu manualmente a expressão ON ao adicionar a tabela,
+                        # ela pode ter sido armazenada em UserRole+2; usar sem tentar inferir FKs
+                        try:
+                            stored_on = item.data(Qt.UserRole + 2)
+                            if stored_on:
+                                join_clauses.append(f"{join_type} {table_repr} ON {stored_on}")
+                                continue
+                        except Exception:
+                            pass
                         # tentar encontrar FKs entre a tabela anterior (idx-1) e esta
                         on_parts = []
                         try:
@@ -3627,85 +3814,177 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         Retorna expressão ON (string) ou None se cancelado.
         """
         try:
-            from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QDialogButtonBox
+            from PyQt5.QtWidgets import (
+                QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
+                QDialogButtonBox, QPushButton, QWidget, QSpacerItem, QSizePolicy
+            )
+
             dlg = QDialog(self)
-            dlg.setWindowTitle(f"Definir condição de JOIN para {current_table[1]}")
+            dlg.setWindowTitle(f"Definir condição(s) de JOIN para {current_table[1]}")
             v = QVBoxLayout(dlg)
-            v.addWidget(QLabel(f"Defina a condição ON para {join_type} entre a tabela alvo e uma tabela existente."))
+            v.addWidget(QLabel(f"Defina uma ou mais condições ON para {join_type} entre a(s) tabela(s) existente(s) e {current_table[1]}."))
 
-            # escolha da tabela anterior
-            table_sel_layout = QHBoxLayout()
-            table_sel_layout.addWidget(QLabel("Tabela existente:"))
-            prior_combo = QComboBox()
-            prior_combo.addItems([f"{s}.{t}" for s, t in prior_tables])
-            table_sel_layout.addWidget(prior_combo)
-            v.addLayout(table_sel_layout)
+            # painel de linhas (cada linha = 1 condição)
+            rows_container = QVBoxLayout()
+            v.addLayout(rows_container)
 
-            # colunas
-            col_layout = QHBoxLayout()
-            col_layout.addWidget(QLabel("Coluna (existente):"))
-            prior_col = QComboBox()
-            col_layout.addWidget(prior_col)
-            col_layout.addWidget(QLabel("Coluna (nova):"))
-            curr_col = QComboBox()
-            col_layout.addWidget(curr_col)
-            v.addLayout(col_layout)
-
-            # preencher listas de colunas
-            def load_columns_for_prior(idx=0):
+            # ajuda: função para obter colunas ordenadas alfabeticamente
+            def get_columns_sorted(schema, table):
                 try:
-                    s, t = prior_tables[prior_combo.currentIndex()]
-                    cols = []
-                    try:
-                        cols = [c.column_name for c in (self.qb.get_table_columns(s, t) or [])]
-                    except Exception:
-                        cols = []
-                    prior_col.clear()
-                    prior_col.addItems(cols or ["(sem colunas)"])
+                    cols = [c.column_name for c in (self.qb.get_table_columns(schema, table) or [])]
+                    cols = sorted(cols, key=lambda s: (s or '').lower())
+                    return cols
                 except Exception:
-                    prior_col.clear()
+                    return []
 
-            def load_columns_for_current():
-                try:
-                    cs, ct = current_table
-                    cols = []
+            # criar uma linha de condição (widgets) e retornar referência
+            def create_condition_row():
+                container = QWidget()
+                hl = QHBoxLayout(container)
+                hl.setContentsMargins(0,0,0,0)
+                # prior table selector
+                prior_table_cb = QComboBox()
+                prior_table_cb.setMinimumWidth(160)
+                prior_table_cb.addItems([f"{s}.{t}" for s, t in prior_tables])
+                hl.addWidget(QLabel("Tabela existente:"))
+                hl.addWidget(prior_table_cb)
+
+                # prior column
+                prior_col_cb = QComboBox()
+                prior_col_cb.setMinimumWidth(140)
+                hl.addWidget(QLabel("Campo (existente):"))
+                hl.addWidget(prior_col_cb)
+
+                # equal label
+                hl.addWidget(QLabel(" = "))
+
+                # current table (read-only label)
+                cs, ct = current_table
+                curr_table_label = QLabel(f"{cs}.{ct}")
+                hl.addWidget(curr_table_label)
+
+                # current column
+                curr_col_cb = QComboBox()
+                curr_col_cb.setMinimumWidth(140)
+                hl.addWidget(QLabel("Campo (novo):"))
+                hl.addWidget(curr_col_cb)
+
+                # remover botão
+                remove_btn = QPushButton("Remover")
+                remove_btn.setMinimumWidth(80)
+                hl.addWidget(remove_btn)
+
+                # preencher colunas iniciais
+                def load_cols_for_prior():
                     try:
-                        cols = [c.column_name for c in (self.qb.get_table_columns(cs, ct) or [])]
+                        idx = prior_table_cb.currentIndex()
+                        s, t = prior_tables[idx]
+                        prior_col_cb.clear()
+                        cols = get_columns_sorted(s, t)
+                        prior_col_cb.addItems(cols or ["(sem colunas)"])
                     except Exception:
-                        cols = []
-                    curr_col.clear()
-                    curr_col.addItems(cols or ["(sem colunas)"])
-                except Exception:
-                    curr_col.clear()
+                        prior_col_cb.clear()
 
-            prior_combo.currentIndexChanged.connect(lambda _ : load_columns_for_prior())
-            load_columns_for_prior()
-            load_columns_for_current()
+                def load_cols_for_curr():
+                    try:
+                        curr_col_cb.clear()
+                        cols = get_columns_sorted(cs, ct)
+                        curr_col_cb.addItems(cols or ["(sem colunas)"])
+                    except Exception:
+                        curr_col_cb.clear()
 
-            btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-            v.addWidget(btns)
-            def on_accept():
-                # validar
+                prior_table_cb.currentIndexChanged.connect(lambda _ : load_cols_for_prior())
+                load_cols_for_prior()
+                load_cols_for_curr()
+
+                # conectar remover
+                def do_remove():
+                    try:
+                        # remover widget do layout
+                        for i in range(rows_container.count()):
+                            w = rows_container.itemAt(i).widget()
+                            if w is container:
+                                # remove and delete
+                                item = rows_container.takeAt(i)
+                                w.setParent(None)
+                                return
+                    except Exception:
+                        pass
+                remove_btn.clicked.connect(do_remove)
+
+                return container, prior_table_cb, prior_col_cb, curr_col_cb
+
+            # botão para adicionar condição
+            add_btn = QPushButton("Adicionar condição")
+            v.addWidget(add_btn)
+
+            # adiciona primeira linha por padrão
+            first_row, *_ = create_condition_row()
+            rows_container.addWidget(first_row)
+
+            def on_add():
                 try:
-                    if prior_col.count() == 0 or curr_col.count() == 0:
-                        QMessageBox.warning(dlg, "Escolha inválida", "Não há colunas disponíveis para formar ON.")
-                        return
+                    row, *_ = create_condition_row()
+                    rows_container.addWidget(row)
                 except Exception:
                     pass
-                dlg.accept()
+            add_btn.clicked.connect(on_add)
+
+            # espaçador e botões OK/Cancel
+            v.addItem(QSpacerItem(20,10, QSizePolicy.Minimum, QSizePolicy.Expanding))
+            btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            v.addWidget(btns)
+
+            # garantir tamanho mínimo e layout atualizado para que o botão
+            # 'Adicionar condição' e a primeira linha fiquem visíveis imediatamente
+            try:
+                dlg.setMinimumWidth(640)
+                dlg.setMinimumHeight(180)
+                dlg.adjustSize()
+            except Exception:
+                pass
+
+            def on_accept():
+                try:
+                    # validar ao menos uma condição bem formada
+                    conditions = []
+                    for i in range(rows_container.count()):
+                        w = rows_container.itemAt(i).widget()
+                        if w is None:
+                            continue
+                        # extrair comboboxes por busca
+                        try:
+                            cbs = w.findChildren(QComboBox)
+                            if len(cbs) >= 3:
+                                prior_table_text = cbs[0].currentText()
+                                prior_col_text = cbs[1].currentText()
+                                curr_col_text = cbs[2].currentText()
+                                if prior_table_text and prior_col_text and curr_col_text and not prior_col_text.startswith('(') and not curr_col_text.startswith('('):
+                                    # prior_table_text is like schema.table
+                                    ps, pt = prior_table_text.split('.', 1)
+                                    cs, ct = current_table
+                                    expr = f"[{ps}].[{pt}].[{prior_col_text}] = [{cs}].[{ct}].[{curr_col_text}]"
+                                    conditions.append(expr)
+                        except Exception:
+                            continue
+                    if not conditions:
+                        QMessageBox.warning(dlg, "Condição ausente", "Adicione ao menos uma condição válida para ON.")
+                        return
+                    # store conditions in dlg attribute for retrieval
+                    dlg._on_conditions = conditions
+                    dlg.accept()
+                except Exception:
+                    QMessageBox.warning(dlg, "Erro", "Erro ao validar condições.")
+
             btns.accepted.connect(on_accept)
             btns.rejected.connect(dlg.reject)
 
             if dlg.exec_() == QDialog.Accepted:
                 try:
-                    ps, pt = prior_tables[prior_combo.currentIndex()]
-                    pc = prior_col.currentText()
-                    cs, ct = current_table
-                    cc = curr_col.currentText()
-                    if not pc or not cc or pc.startswith('(') or cc.startswith('('):
+                    conds = getattr(dlg, '_on_conditions', None)
+                    if not conds:
                         return None
-                    on_expr = f"[{ps}].[{pt}].[{pc}] = [{cs}].[{ct}].[{cc}]"
-                    return on_expr
+                    return ' AND '.join(conds)
                 except Exception:
                     return None
             return None
