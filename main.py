@@ -614,6 +614,15 @@ class QueryBuilderTab(QWidget):
         # Campo para mostrar a SQL gerada no modo Manual (após Gerar consulta)
         try:
             manual_layout.addWidget(QLabel("<b>🧠 Consulta gerada</b>"))
+            # campo para mostrar/editar o nome da consulta carregada (visível no formulário)
+            self.manual_loaded_name_label = QLabel("Nome da consulta:")
+            try:
+                self.manual_loaded_name_edit = QLineEdit()
+            except Exception:
+                self.manual_loaded_name_edit = None
+            manual_layout.addWidget(self.manual_loaded_name_label)
+            if getattr(self, 'manual_loaded_name_edit', None) is not None:
+                manual_layout.addWidget(self.manual_loaded_name_edit)
             self.manual_sql_preview = QTextEdit()
             self.manual_sql_preview.setReadOnly(True)
             try:
@@ -1225,7 +1234,13 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
 
         btn_generate = QPushButton("🔄 Atualizar a consulta")
         btn_generate.setToolTip("Atualiza a SQL gerada com as recentes alterações")
-        btn_generate.clicked.connect(self.generate_sql)
+        # Conexão para atualizar a consulta comentada por solicitação (consulta manual):
+        # btn_generate.clicked.connect(self.generate_sql)
+        # Tornar o botão invisível na UI conforme solicitado
+        try:
+            btn_generate.setVisible(False)
+        except Exception:
+            pass
         btn_generate.setMinimumWidth(140)
         btn_generate.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_generate)
@@ -1259,13 +1274,28 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         btn_delete.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         action_layout.addWidget(btn_delete)
 
+        # Label para indicar qual consulta está carregada (visível no formulário Manual)
+        try:
+            # criar o widget, mas não adicioná-lo a um layout local que nunca
+            # é inserido na UI (isso causava o label virar uma janela própria).
+            self.loaded_query_label = QLabel("")
+            self.loaded_query_label.setWordWrap(True)
+            self.loaded_query_label.setVisible(False)
+            try:
+                # marca para debugging e inspeção de parent
+                self.loaded_query_label.setObjectName('loaded_query_label')
+                print(f"DEBUG: created loaded_query_label, parent={self.loaded_query_label.parent()}")
+            except Exception:
+                pass
+        except Exception:
+            self.loaded_query_label = None
+
         #btn_manage = QPushButton("🔧 Gerenciar consultas")
         # Abrir o gerenciador de consultas da janela principal (MainWindow)
         # Conexão comentada por solicitação do usuário — rotina desativada.
         # btn_manage.clicked.connect(lambda: (self.window().open_manage_queries() if hasattr(self.window(), 'open_manage_queries') else None))
     #try:
     #    pass
-        #btn_manage.setMinimumWidth(140)
         #btn_manage.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         #action_layout.addWidget(btn_manage)
 
@@ -1290,6 +1320,16 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             actions_layout.addWidget(btn_save)
             actions_layout.addWidget(btn_load)
             actions_layout.addWidget(btn_delete)
+            # adicionar também o label que indica consulta carregada (se criado)
+            try:
+                if getattr(self, 'loaded_query_label', None) is not None:
+                    actions_layout.addWidget(self.loaded_query_label)
+                    try:
+                        print(f"DEBUG: added loaded_query_label to actions_layout, parent now={self.loaded_query_label.parent()}")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             #actions_layout.addWidget(btn_manage)
         except Exception:
             pass
@@ -3609,7 +3649,8 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 # base = primeira tabela
                 if from_parts:
                     base_schema, base_table = from_parts[0]
-                    base_repr = f"[{base_schema}].[{base_table}]"
+                    # always append WITH (NOLOCK) for manual mode as requested
+                    base_repr = f"[{base_schema}].[{base_table}] WITH (NOLOCK)"
                 else:
                     base_repr = ''
                 join_clauses = []
@@ -3623,7 +3664,8 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     except Exception:
                         join_type = None
 
-                    table_repr = f"[{s}].[{tname}]"
+                    # ensure WITH (NOLOCK) right after table name in FROM/JOIN
+                    table_repr = f"[{s}].[{tname}] WITH (NOLOCK)"
 
                     if join_type and qb_local is not None:
                         # se o usuário já definiu manualmente a expressão ON ao adicionar a tabela,
@@ -3717,10 +3759,31 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                         join_clauses.append(f", {table_repr}")
 
                 # montar from_clause como base + joins
+                # Formatação: colocar cada JOIN (ou tabela fallback) em sua própria linha
                 if base_repr:
-                    from_clause = base_repr + (' ' + ' '.join(join_clauses) if join_clauses else '')
+                    if join_clauses:
+                        normalized = []
+                        for jc in join_clauses:
+                            try:
+                                jc_strip = jc.strip()
+                                # preservar entradas que começaram com vírgula (fallback)
+                                if jc_strip.startswith(','):
+                                    # manter a vírgula, mas aplicar indentação de 2 espaços
+                                    jc_clean = jc_strip.lstrip(',').strip()
+                                    normalized.append('  , ' + jc_clean)
+                                else:
+                                    # adicionar 2 espaços de indentação antes do JOIN
+                                    normalized.append('  ' + jc_strip)
+                            except Exception:
+                                normalized.append('  ' + jc)
+                        from_clause = base_repr + '\n' + '\n'.join(normalized)
+                    else:
+                        from_clause = base_repr
                 else:
-                    from_clause = ', '.join([f"[{s}].[{t}]" for s, t in from_parts])
+                    # sem base (caso raro), listar cada tabela em nova linha
+                    # prefix each table with two-space indent for readability
+                    lines = [f"  [{s}].[{t}] WITH (NOLOCK)" for s, t in from_parts]
+                    from_clause = ',\n'.join(lines)
             
 
             # Helper para resolver um campo (ex: 'table.col' ou '[schema].[table].[col]') para usar alias
@@ -3763,14 +3826,23 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             # If no columns selected, do NOT show the default 'SELECT * FROM' in the
             # preview — instead only show the FROM clause (or nothing if no tables).
             if not cols:
-                select_clause = None
+                select_block = None
             else:
                 cleaned = []
                 for c in cols:
                     m = re.match(r"^([^\(]+)\s*(?:\(.*\))?$", c)
                     raw_field = m.group(1).strip() if m else c
                     cleaned.append(_resolve_field_to_alias(raw_field))
-                select_clause = ', '.join(cleaned)
+                # montar SELECT em múltiplas linhas: uma linha 'SELECT' e
+                # cada campo em sua própria linha com 4 espaços de indentação
+                try:
+                    lines = ["SELECT"]
+                    for i, fld in enumerate(cleaned):
+                        comma = ',' if i < len(cleaned) - 1 else ''
+                        lines.append('    ' + fld + comma)
+                    select_block = '\n'.join(lines)
+                except Exception:
+                    select_block = 'SELECT ' + ', '.join(cleaned)
 
             # Where (opcional) - prefer filtros parametrizados
             where_clause = ''
@@ -3837,15 +3909,21 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
 
             # Monta SQL levando em conta o comportamento desejado quando
             # nenhuma coluna foi selecionada: não exibimos 'SELECT * FROM'.
-            if not select_clause:
+            if not select_block:
                 if from_clause:
                     sql = f"FROM {from_clause}"
                 else:
                     sql = ''
             else:
-                sql = f"SELECT {select_clause} FROM {from_clause}"
+                # select_block may already contain line breaks; append FROM after it
+                sql = f"{select_block} FROM {from_clause}"
+            # Garantir que a cláusula WHERE esteja em nova linha e com indentação
+            # de 4 espaços para legibilidade
             if where_clause:
-                sql += f" WHERE {where_clause}"
+                try:
+                    sql += '\n' + '    WHERE ' + where_clause
+                except Exception:
+                    sql += '\nWHERE ' + where_clause
 
             # GROUP BY handling removed (feature deferred)
 
@@ -6705,27 +6783,68 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 )
                 return
         
-        # Solicita nome
-        name, ok = QInputDialog.getText(
-            self,
-            "Salvar Consulta",
-            "Nome da consulta:",
-            QLineEdit.Normal
-        )
-        
-        if not ok or not name:
-            return
-        
-        # Solicita descrição
-        description, ok = QInputDialog.getText(
-            self,
-            "Salvar Consulta",
-            "Descrição (opcional):",
-            QLineEdit.Normal
-        )
-        
-        if not ok:
-            return
+        # Solicita nome e descrição em diálogo simples (campo visível para edição)
+        try:
+            from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Salvar Consulta")
+            v = QVBoxLayout(dlg)
+            v.addWidget(QLabel("Nome da consulta:"))
+            name_edit = QLineEdit()
+            # prefill from visible form field if present
+            try:
+                if getattr(self, 'manual_loaded_name_edit', None) is not None:
+                    cur = self.manual_loaded_name_edit.text().strip()
+                    if cur:
+                        name_edit.setText(cur)
+            except Exception:
+                pass
+            v.addWidget(name_edit)
+            v.addWidget(QLabel("Descrição (opcional):"))
+            desc_edit = QLineEdit()
+            v.addWidget(desc_edit)
+
+            btns = QHBoxLayout()
+            btn_save = QPushButton("Salvar")
+            btn_cancel = QPushButton("Cancelar")
+            btns.addStretch()
+            btns.addWidget(btn_save)
+            btns.addWidget(btn_cancel)
+            v.addLayout(btns)
+
+            def on_accept():
+                if not name_edit.text().strip():
+                    QMessageBox.warning(self, "Aviso", "Informe um nome para a consulta")
+                    return
+                dlg.accept()
+
+            btn_save.clicked.connect(on_accept)
+            btn_cancel.clicked.connect(dlg.reject)
+
+            if dlg.exec_() != QDialog.Accepted:
+                return
+
+            name = name_edit.text().strip()
+            description = desc_edit.text().strip()
+        except Exception:
+            # fallback para entrada simples
+            name, ok = QInputDialog.getText(
+                self,
+                "Salvar Consulta",
+                "Nome da consulta:",
+                QLineEdit.Normal
+            )
+            if not ok or not name:
+                return
+            description, ok = QInputDialog.getText(
+                self,
+                "Salvar Consulta",
+                "Descrição (opcional):",
+                QLineEdit.Normal
+            )
+            if not ok:
+                return
         
         try:
             # Verifica se já existe
@@ -6747,12 +6866,48 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             except Exception:
                 tag = 'P'
 
+            # coletar estado UI relevante para modo manual
+            ui_state = None
+            try:
+                if getattr(self, 'modo_consulta', 'metadados') == 'manual':
+                    ui_state = {}
+                    # selected tables: list of {raw, join_type, on}
+                    tables_state = []
+                    for i in range(self.selected_tables_list.count()):
+                        try:
+                            it = self.selected_tables_list.item(i)
+                            raw = self._get_selected_table_raw_text(it)
+                            jt = it.data(Qt.UserRole + 1)
+                            on_expr = it.data(Qt.UserRole + 2)
+                            tables_state.append({'raw': raw, 'join_type': jt, 'on': on_expr})
+                        except Exception:
+                            continue
+                    ui_state['selected_tables'] = tables_state
+                    # selected columns
+                    cols_state = [self.selected_columns_list.item(i).text() for i in range(self.selected_columns_list.count())]
+                    ui_state['selected_columns'] = cols_state
+                    # filters (ensure serializable)
+                    try:
+                        ui_state['filters'] = []
+                        for f in (getattr(self, '_param_filters', []) or []):
+                            # convert tuples to lists for json
+                            if isinstance(f, (list, tuple)):
+                                ui_state['filters'].append(list(f))
+                            else:
+                                ui_state['filters'].append(f)
+                    except Exception:
+                        ui_state['filters'] = getattr(self, '_param_filters', [])
+
+            except Exception:
+                ui_state = None
+
             self.qm.add_query(
                 name=name,
                 sql=sql,
                 description=description,
                 created_by="Usuario",  # Pode passar o usuário logado
                 tags=[tag],
+                ui_state=ui_state,
                 overwrite=(existing is not None)
             )
             try:
@@ -6761,6 +6916,27 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             except Exception:
                 pass
             QMessageBox.information(self, "Sucesso", "Consulta salva com sucesso!")
+            try:
+                if getattr(self, 'manual_loaded_name_edit', None) is not None:
+                    try:
+                        # bloquear sinais temporariamente ao popular o campo para
+                        # evitar que handlers ligados (ex.: abrir diálogo)
+                        # sejam disparados automaticamente.
+                        self.manual_loaded_name_edit.blockSignals(True)
+                        self.manual_loaded_name_edit.setText(name)
+                    finally:
+                        try:
+                            self.manual_loaded_name_edit.blockSignals(False)
+                        except Exception:
+                            pass
+                    try:
+                        if getattr(self, 'loaded_query_label', None) is not None:
+                            self.loaded_query_label.setText(f"Consulta carregada: {name}")
+                            self.loaded_query_label.setVisible(True)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao salvar consulta:\n{str(e)}")
@@ -6802,13 +6978,121 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     self.session_logger.log('load_query', f"Carregou consulta '{query.name}'", {'name': query.name})
             except Exception:
                 pass
-            QMessageBox.information(
-                self,
-                "Consulta Carregada",
-                    f"Nome: {query.name}\n"
-                    f"Descrição: {query.description}\n"
-                    f"Criada: {_format_iso_timestamp(query.created_at)}"
-            )
+            # Ao carregar: apenas popular o preview e o campo de nome no formulário
+            try:
+                if getattr(self, 'manual_sql_preview', None) is not None:
+                    self.manual_sql_preview.setPlainText(query.sql)
+            except Exception:
+                pass
+            try:
+                if getattr(self, 'manual_loaded_name_edit', None) is not None:
+                    try:
+                        self.manual_loaded_name_edit.blockSignals(True)
+                        self.manual_loaded_name_edit.setText(query.name)
+                    finally:
+                        try:
+                            self.manual_loaded_name_edit.blockSignals(False)
+                        except Exception:
+                            pass
+                if getattr(self, 'loaded_query_label', None) is not None:
+                    self.loaded_query_label.setText(f"Consulta carregada: {query.name}")
+                    self.loaded_query_label.setVisible(True)
+            except Exception:
+                pass
+            # Restaurar estado da UI se disponível (apenas para modo manual)
+            try:
+                modo = getattr(self, 'modo_consulta', 'metadados')
+                if modo == 'manual' and getattr(query, 'ui_state', None):
+                    ui = query.ui_state
+                    # Selected tables
+                    try:
+                        self.selected_tables_list.clear()
+                        for t in ui.get('selected_tables', []) or []:
+                            try:
+                                raw = t.get('raw') if isinstance(t, dict) else None
+                                if not raw:
+                                    continue
+                                jt = t.get('join_type') if isinstance(t, dict) else None
+                                on_expr = t.get('on') if isinstance(t, dict) else None
+                                # build display text; nr will be fixed by renumber
+                                display = raw
+                                if jt:
+                                    display = f"{raw} [{jt}]"
+                                li = QListWidgetItem(display)
+                                li.setData(Qt.UserRole, raw)
+                                try:
+                                    li.setData(Qt.UserRole + 1, jt)
+                                except Exception:
+                                    pass
+                                try:
+                                    li.setData(Qt.UserRole + 2, on_expr)
+                                except Exception:
+                                    pass
+                                # clear any pending marker
+                                try:
+                                    li.setData(Qt.UserRole + 99, None)
+                                except Exception:
+                                    pass
+                                self.selected_tables_list.addItem(li)
+                            except Exception:
+                                continue
+                        try:
+                            self._renumber_selected_tables()
+                        except Exception:
+                            pass
+                        try:
+                            self.update_available_columns()
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+
+                    # selected columns
+                    try:
+                        self.selected_columns_list.clear()
+                        for c in ui.get('selected_columns', []) or []:
+                            try:
+                                it = QListWidgetItem(c)
+                                self.selected_columns_list.addItem(it)
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+
+                    # filters
+                    try:
+                        self._param_filters = ui.get('filters', []) or []
+                        try:
+                            self._refresh_filters_list()
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+
+                    # recompute SQL preview
+                    try:
+                        self.generate_sql_manual()
+                        if getattr(self, 'manual_sql_preview', None) is not None:
+                            # update the preview text with regenerated SQL
+                            self.manual_sql_preview.setPlainText(self.sql_preview.toPlainText() if getattr(self, 'sql_preview', None) is not None else '')
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                if getattr(self, 'session_logger', None):
+                    self.session_logger.log('load_query', f"Carregou consulta '{query.name}'", {'name': query.name})
+            except Exception:
+                pass
+            try:
+                # mostrar pequena notificação na status bar se disponível
+                if getattr(self, 'statusBar', None):
+                    try:
+                        self.statusBar().showMessage(f"Consulta '{query.name}' carregada", 3000)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
     def delete_query(self):
         """Exclui uma consulta (prompt simples) via QueryBuilderTab."""

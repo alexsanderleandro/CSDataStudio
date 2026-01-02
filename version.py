@@ -1,4 +1,4 @@
-VERSION = "25.12.29 rev. 2"
+VERSION = "26.01.02 rev. 6"
 
 # Nome amigável do aplicativo e da companhia
 APP_NAME = "CSData Studio"

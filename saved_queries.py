@@ -18,13 +18,28 @@ class SavedQuery:
     modified_at: str
     created_by: str
     tags: List[str]
+    ui_state: Optional[Dict] = None
     
     def to_dict(self) -> Dict:
-        return asdict(self)
+        d = asdict(self)
+        # ensure ui_state is serializable (it should be dict/list primitives)
+        if d.get('ui_state') is None:
+            d.pop('ui_state', None)
+        return d
     
     @staticmethod
     def from_dict(data: Dict) -> 'SavedQuery':
-        return SavedQuery(**data)
+        # backward compatibility: ui_state may not be present
+        return SavedQuery(
+            name=data.get('name'),
+            sql=data.get('sql'),
+            description=data.get('description', ''),
+            created_at=data.get('created_at', ''),
+            modified_at=data.get('modified_at', ''),
+            created_by=data.get('created_by', ''),
+            tags=data.get('tags', []),
+            ui_state=data.get('ui_state')
+        )
 
 class QueryManager:
     """Gerencia consultas salvas em arquivo JSON"""
@@ -81,6 +96,7 @@ class QueryManager:
         description: str = "",
         created_by: str = "",
         tags: List[str] = None,
+        ui_state: Optional[Dict] = None,
         overwrite: bool = False
     ) -> bool:
         """
@@ -112,6 +128,7 @@ class QueryManager:
             query.description = description
             query.modified_at = now
             query.tags = tags or []
+            query.ui_state = ui_state
         else:
             # Cria nova consulta
             query = SavedQuery(
@@ -121,7 +138,8 @@ class QueryManager:
                 created_at=now,
                 modified_at=now,
                 created_by=created_by,
-                tags=tags or []
+                tags=tags or [],
+                ui_state=ui_state
             )
             self._queries[name] = query
         
