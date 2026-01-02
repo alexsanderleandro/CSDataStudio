@@ -476,6 +476,12 @@ class QueryBuilderTab(QWidget):
             self.selected_tables_list.setMaximumHeight(140)
         except Exception:
             pass
+        # permitir menu de contexto para editar JOIN quando aplicável
+        try:
+            self.selected_tables_list.setContextMenuPolicy(Qt.CustomContextMenu)
+            self.selected_tables_list.customContextMenuRequested.connect(self.on_selected_tables_context_menu)
+        except Exception:
+            pass
         left_layout.addWidget(self.selected_tables_list)
         
         # Botões para gerenciar tabelas (mover para abaixo de 'Fontes de dados escolhidas')
@@ -2216,6 +2222,62 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         menu.addAction(act2)
         menu.exec_(self.tables_list.mapToGlobal(pos))
 
+    def on_selected_tables_context_menu(self, pos):
+        """Context menu for selected tables list. Offers 'Editar JOIN' when the item has a join."""
+        try:
+            item = self.selected_tables_list.itemAt(pos)
+            if not item:
+                return
+            menu = QMenu(self)
+            join_type = item.data(Qt.UserRole + 1)
+            existing_on = item.data(Qt.UserRole + 2)
+            # only offer edit if there is a join_type or existing ON stored
+            if join_type or existing_on:
+                act_edit = QAction("Editar JOIN", self)
+                def do_edit():
+                    try:
+                        # build prior_tables as the list of tables before this item
+                        prior = []
+                        for i in range(self.selected_tables_list.count()):
+                            it = self.selected_tables_list.item(i)
+                            if it is item:
+                                break
+                            raw = self._get_selected_table_raw_text(it)
+                            try:
+                                s, t = raw.split('.', 1)
+                                s = s.strip('[]')
+                                t = t.split('(')[0].strip()
+                                prior.append((s, t))
+                            except Exception:
+                                continue
+                        # current table
+                        raw_cur = self._get_selected_table_raw_text(item)
+                        try:
+                            cs, ct = raw_cur.split('.', 1)
+                            cs = cs.strip('[]')
+                            ct = ct.split('(')[0].strip()
+                        except Exception:
+                            QMessageBox.warning(self, 'Editar JOIN', 'Não foi possível identificar a tabela selecionada para edição do JOIN.')
+                            return
+                        # open dialog preloaded with existing_on
+                        new_on = self._ask_user_for_join_on(prior, (cs, ct), join_type or 'INNER JOIN', existing_on=existing_on)
+                        if new_on is None:
+                            # cancelled, keep existing
+                            return
+                        # save updated ON expression
+                        item.setData(Qt.UserRole + 2, new_on)
+                        try:
+                            self.generate_sql_manual()
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        print(f"Erro ao editar JOIN: {e}")
+                act_edit.triggered.connect(do_edit)
+                menu.addAction(act_edit)
+            menu.exec_(self.selected_tables_list.mapToGlobal(pos))
+        except Exception:
+            pass
+
     def normalize_date(self, value: str) -> str:
         """Normaliza uma string de data para m-d-YYYY.
         Tenta usar dateutil.parser.parse quando disponível para tratar diversos formatos e timezones.
@@ -3807,7 +3869,7 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
         except Exception as e:
             QMessageBox.critical(self, "Erro ao gerar SQL (manual)", f"{e}")
     
-    def _ask_user_for_join_on(self, prior_tables: list, current_table: tuple, join_type: str = 'INNER JOIN') -> Optional[str]:
+    def _ask_user_for_join_on(self, prior_tables: list, current_table: tuple, join_type: str = 'INNER JOIN', existing_on: Optional[str] = None) -> Optional[str]:
         """Mostra diálogo para o usuário escolher par de colunas para usar em ON
         prior_tables: list de (schema,table) já adicionadas
         current_table: (schema,table) da tabela a ser juntada
@@ -3918,9 +3980,37 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             add_btn = QPushButton("Adicionar condição")
             v.addWidget(add_btn)
 
-            # adiciona primeira linha por padrão
-            first_row, *_ = create_condition_row()
-            rows_container.addWidget(first_row)
+            # helper: tenta parsear existing_on em condições individuais
+            def parse_existing_conditions(on_text: str):
+                try:
+                    import re
+                    if not on_text:
+                        return []
+                    splitter = re.compile(r'\s+AND\s+', re.IGNORECASE)
+                    parts = splitter.split(on_text)
+                    parsed = []
+                    pat = re.compile(r'^\s*\[?([^\]]+)\]?\.\[?([^\]]+)\]?\.\[?([^\]]+)\]?\s*=\s*\[?([^\]]+)\]?\.\[?([^\]]+)\]?\.\[?([^\]]+)\]?\s*$', re.IGNORECASE)
+                    for p in parts:
+                        m = pat.match(p)
+                        if not m:
+                            continue
+                        a1, a2, a3, b1, b2, b3 = m.groups()
+                        # determina qual lado é a tabela atual
+                        cs, ct = current_table
+                        if b1 == cs and b2 == ct:
+                            # prior = a1.a2.a3  current = b1.b2.b3
+                            parsed.append(((a1, a2, a3), (b1, b2, b3)))
+                        elif a1 == cs and a2 == ct:
+                            # prior = b1.b2.b3  current = a1.a2.a3
+                            parsed.append(((b1, b2, b3), (a1, a2, a3)))
+                        else:
+                            # não conseguimos identificar o lado; assume prior is first
+                            parsed.append(((a1, a2, a3), (b1, b2, b3)))
+                    return parsed
+                except Exception:
+                    return []
+
+            existing_parsed = parse_existing_conditions(existing_on) if existing_on else []
 
             def on_add():
                 try:
@@ -3929,6 +4019,52 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 except Exception:
                     pass
             add_btn.clicked.connect(on_add)
+
+            # Se houver condições existentes, popula linhas com elas; senão adiciona uma linha vazia
+            try:
+                if existing_parsed:
+                    # limpa qualquer linha padrão criada e adiciona por condição
+                    for cond in existing_parsed:
+                        prior_side, curr_side = cond
+                        # criar linha e ajustar seleções
+                        row, prior_cb, prior_col_cb, curr_col_cb = create_condition_row()
+                        rows_container.addWidget(row)
+                        try:
+                            prior_full = f"{prior_side[0]}.{prior_side[1]}"
+                            # selecionar prior table
+                            for idx, (s, t) in enumerate(prior_tables):
+                                if f"{s}.{t}" == prior_full:
+                                    prior_cb.setCurrentIndex(idx)
+                                    break
+                            # ajustar prior col
+                            prior_col = prior_side[2]
+                            for i in range(prior_col_cb.count()):
+                                if prior_col_cb.itemText(i) == prior_col:
+                                    prior_col_cb.setCurrentIndex(i)
+                                    break
+                            else:
+                                prior_col_cb.addItem(prior_col)
+                                prior_col_cb.setCurrentIndex(prior_col_cb.count()-1)
+                            # ajustar curr col
+                            curr_col = curr_side[2]
+                            for i in range(curr_col_cb.count()):
+                                if curr_col_cb.itemText(i) == curr_col:
+                                    curr_col_cb.setCurrentIndex(i)
+                                    break
+                            else:
+                                curr_col_cb.addItem(curr_col)
+                                curr_col_cb.setCurrentIndex(curr_col_cb.count()-1)
+                        except Exception:
+                            pass
+                else:
+                    first_row, *_ = create_condition_row()
+                    rows_container.addWidget(first_row)
+            except Exception:
+                try:
+                    first_row, *_ = create_condition_row()
+                    rows_container.addWidget(first_row)
+                except Exception:
+                    pass
 
             # espaçador e botões OK/Cancel
             v.addItem(QSpacerItem(20,10, QSizePolicy.Minimum, QSizePolicy.Expanding))
