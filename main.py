@@ -5146,11 +5146,10 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                     try:
                         self.manual_filters_list.clear()
                         # debug removed: manual_filters_list cleared
+                        # Simpler presentation: create plain textual QListWidgetItem per filter
                         for pv, conn in previews:
                             try:
-                                # debug removed: adding manual item
-                                # Use a plain QListWidgetItem with pre-elided text
-                                # to avoid setItemWidget-related timing issues.
+                                # Prepare display text (elide if needed)
                                 try:
                                     max_w_m = self.manual_filters_list.viewport().width() - 40
                                 except Exception:
@@ -5162,60 +5161,49 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                                         display_text = fm.elidedText(pv, Qt.ElideRight, max_w_m)
                                 except Exception:
                                     pass
-                                mit = QListWidgetItem()
+
+                                mit = QListWidgetItem(display_text)
                                 mit.setData(Qt.UserRole, (pv, conn))
-                                try:
-                                    # create embedded widget: checkbox + label
-                                    container_m = QWidget()
-                                    h_m = QHBoxLayout(container_m)
-                                    h_m.setContentsMargins(6, 2, 6, 2)
-                                    # ícone simples substitui o checkbox — é um botão tool sem borda
-                                    try:
-                                        from PyQt5.QtWidgets import QToolButton, QStyle
-                                        icon_btn = QToolButton()
-                                        try:
-                                            icon = self.style().standardIcon(QStyle.SP_FileDialogDetailedView)
-                                            icon_btn.setIcon(icon)
-                                        except Exception:
-                                            pass
-                                        icon_btn.setAutoRaise(True)
-                                        icon_btn.setToolTip('Ações do filtro')
-                                        # permitir menu de contexto local no ícone
-                                        icon_btn.setContextMenuPolicy(Qt.CustomContextMenu)
-                                        icon_btn.customContextMenuRequested.connect(lambda p, mit=mit: self.on_manual_filter_icon_context(p, mit))
-                                    except Exception:
-                                        # fallback para QLabel se QToolButton não estiver disponível
-                                        icon_btn = QLabel('•')
-                                    # label with elided text
-                                    lbl = QLabel(display_text)
-                                    lbl.setWordWrap(False)
-                                    lbl.setTextInteractionFlags(lbl.textInteractionFlags() | Qt.TextSelectableByMouse)
-                                    try:
-                                        f = lbl.font()
-                                        f.setPointSize(10)
-                                        lbl.setFont(f)
-                                    except Exception:
-                                        pass
-                                    h_m.addWidget(icon_btn, 0, Qt.AlignVCenter)
-                                    h_m.addWidget(lbl, 1)
-                                    h_m.addStretch()
-                                    self.manual_filters_list.addItem(mit)
-                                    self.manual_filters_list.setItemWidget(mit, container_m)
-                                    try:
-                                        mit.setSizeHint(container_m.sizeHint())
-                                    except Exception:
-                                        pass
-                                except Exception:
-                                    # fallback to plain item if widget embedding fails
-                                    try:
-                                        mit.setText(display_text)
-                                        self.manual_filters_list.addItem(mit)
-                                    except Exception:
-                                        logging.exception("_refresh_filters_list: error adding manual item (widget)")
-                                # debug removed: manual item added successfully (simple item)
+                                self.manual_filters_list.addItem(mit)
                             except Exception:
                                 logging.exception("_refresh_filters_list: error adding manual item (simple)")
                         # debug removed: manual_filters_list.count
+                        # Forçar refresh/visibilidade dos ícones nos widgets adicionados.
+                        try:
+                            from PyQt5.QtWidgets import QToolButton
+                            for ii in range(self.manual_filters_list.count()):
+                                try:
+                                    it = self.manual_filters_list.item(ii)
+                                    w = self.manual_filters_list.itemWidget(it)
+                                    if not w:
+                                        continue
+                                    # procurar toolbutton(s) e forçar show/repaint
+                                    for tb in w.findChildren(QToolButton):
+                                        try:
+                                            tb.setVisible(True)
+                                            tb.show()
+                                            tb.repaint()
+                                        except Exception:
+                                            pass
+                                    # garantir que o widget pai também é atualizado
+                                    try:
+                                        w.update()
+                                        w.repaint()
+                                    except Exception:
+                                        pass
+                                except Exception:
+                                    pass
+                            try:
+                                self.manual_filters_list.update()
+                                self.manual_filters_list.repaint()
+                            except Exception:
+                                pass
+                        except Exception:
+                            try:
+                                # fallback: apenas atualizar a lista
+                                self.manual_filters_list.update()
+                            except Exception:
+                                pass
                     except Exception:
                         logging.exception("_refresh_filters_list: error populating manual_filters_list")
                     # Fallback simples: se a população com widgets não adicionou
@@ -5228,40 +5216,9 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                             # debug removed: manual_filters_list empty after widget population
                             for pv, conn in previews:
                                 try:
-                                    mit_simple = QListWidgetItem()
+                                    mit_simple = QListWidgetItem(pv)
                                     mit_simple.setData(Qt.UserRole, (pv, conn))
-                                    try:
-                                        container_m = QWidget()
-                                        h_m = QHBoxLayout(container_m)
-                                        h_m.setContentsMargins(6, 2, 6, 2)
-                                        try:
-                                            from PyQt5.QtWidgets import QToolButton, QStyle
-                                            icon_btn2 = QToolButton()
-                                            try:
-                                                icon2 = self.style().standardIcon(QStyle.SP_FileDialogDetailedView)
-                                                icon_btn2.setIcon(icon2)
-                                            except Exception:
-                                                pass
-                                            icon_btn2.setAutoRaise(True)
-                                            icon_btn2.setToolTip('Ações do filtro')
-                                            icon_btn2.setContextMenuPolicy(Qt.CustomContextMenu)
-                                            icon_btn2.customContextMenuRequested.connect(lambda p, mit=mit_simple: self.on_manual_filter_icon_context(p, mit=mit_simple))
-                                        except Exception:
-                                            icon_btn2 = QLabel('•')
-                                        lbl2 = QLabel(pv)
-                                        lbl2.setWordWrap(False)
-                                        h_m.addWidget(icon_btn2, 0, Qt.AlignVCenter)
-                                        h_m.addWidget(lbl2, 1)
-                                        h_m.addStretch()
-                                        self.manual_filters_list.addItem(mit_simple)
-                                        self.manual_filters_list.setItemWidget(mit_simple, container_m)
-                                        try:
-                                            mit_simple.setSizeHint(container_m.sizeHint())
-                                        except Exception:
-                                            pass
-                                    except Exception:
-                                        mit_simple.setText(pv)
-                                        self.manual_filters_list.addItem(mit_simple)
+                                    self.manual_filters_list.addItem(mit_simple)
                                 except Exception:
                                     logging.exception("_refresh_filters_list: error adding simple fallback item")
                             # debug removed: manual_filters_list.count_after_fallback
