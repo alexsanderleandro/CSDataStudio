@@ -5169,8 +5169,23 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                                     container_m = QWidget()
                                     h_m = QHBoxLayout(container_m)
                                     h_m.setContentsMargins(6, 2, 6, 2)
-                                    chk = QCheckBox()
-                                    chk.setChecked(False)
+                                    # ícone simples substitui o checkbox — é um botão tool sem borda
+                                    try:
+                                        from PyQt5.QtWidgets import QToolButton, QStyle
+                                        icon_btn = QToolButton()
+                                        try:
+                                            icon = self.style().standardIcon(QStyle.SP_FileDialogDetailedView)
+                                            icon_btn.setIcon(icon)
+                                        except Exception:
+                                            pass
+                                        icon_btn.setAutoRaise(True)
+                                        icon_btn.setToolTip('Ações do filtro')
+                                        # permitir menu de contexto local no ícone
+                                        icon_btn.setContextMenuPolicy(Qt.CustomContextMenu)
+                                        icon_btn.customContextMenuRequested.connect(lambda p, mit=mit: self.on_manual_filter_icon_context(p, mit))
+                                    except Exception:
+                                        # fallback para QLabel se QToolButton não estiver disponível
+                                        icon_btn = QLabel('•')
                                     # label with elided text
                                     lbl = QLabel(display_text)
                                     lbl.setWordWrap(False)
@@ -5181,7 +5196,7 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                                         lbl.setFont(f)
                                     except Exception:
                                         pass
-                                    h_m.addWidget(chk, 0, Qt.AlignVCenter)
+                                    h_m.addWidget(icon_btn, 0, Qt.AlignVCenter)
                                     h_m.addWidget(lbl, 1)
                                     h_m.addStretch()
                                     self.manual_filters_list.addItem(mit)
@@ -5219,12 +5234,24 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                                         container_m = QWidget()
                                         h_m = QHBoxLayout(container_m)
                                         h_m.setContentsMargins(6, 2, 6, 2)
-                                        chk = QCheckBox()
-                                        chk.setChecked(False)
-                                        lbl = QLabel(pv)
-                                        lbl.setWordWrap(False)
-                                        h_m.addWidget(chk, 0, Qt.AlignVCenter)
-                                        h_m.addWidget(lbl, 1)
+                                        try:
+                                            from PyQt5.QtWidgets import QToolButton, QStyle
+                                            icon_btn2 = QToolButton()
+                                            try:
+                                                icon2 = self.style().standardIcon(QStyle.SP_FileDialogDetailedView)
+                                                icon_btn2.setIcon(icon2)
+                                            except Exception:
+                                                pass
+                                            icon_btn2.setAutoRaise(True)
+                                            icon_btn2.setToolTip('Ações do filtro')
+                                            icon_btn2.setContextMenuPolicy(Qt.CustomContextMenu)
+                                            icon_btn2.customContextMenuRequested.connect(lambda p, mit=mit_simple: self.on_manual_filter_icon_context(p, mit=mit_simple))
+                                        except Exception:
+                                            icon_btn2 = QLabel('•')
+                                        lbl2 = QLabel(pv)
+                                        lbl2.setWordWrap(False)
+                                        h_m.addWidget(icon_btn2, 0, Qt.AlignVCenter)
+                                        h_m.addWidget(lbl2, 1)
                                         h_m.addStretch()
                                         self.manual_filters_list.addItem(mit_simple)
                                         self.manual_filters_list.setItemWidget(mit_simple, container_m)
@@ -5316,6 +5343,36 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             menu.addAction(act_edit)
             menu.addAction(act_remove)
             menu.exec_(self.manual_filters_list.mapToGlobal(pos))
+        except Exception:
+            pass
+
+    def on_manual_filter_icon_context(self, pos, item: QListWidgetItem):
+        """Context menu shown when right-clicking the filter icon on a specific manual filter item."""
+        try:
+            if item is None:
+                return
+            idx = self.manual_filters_list.row(item)
+            menu = QMenu(self)
+            act_edit = QAction("✏️ Editar filtro", self)
+            act_remove = QAction("➖ Remover filtro", self)
+            act_edit.triggered.connect(lambda: self._edit_filter_by_index(idx))
+            act_remove.triggered.connect(lambda: self._remove_filter_by_index(idx))
+            menu.addAction(act_edit)
+            menu.addAction(act_remove)
+            # map pos relative to the widget that emitted; the item-level handler passes pos from the icon
+            try:
+                global_pos = None
+                w = self.manual_filters_list.itemWidget(item)
+                if w is not None:
+                    global_pos = w.mapToGlobal(pos)
+                else:
+                    global_pos = self.manual_filters_list.mapToGlobal(pos)
+                menu.exec_(global_pos)
+            except Exception:
+                try:
+                    menu.exec_(self.manual_filters_list.mapToGlobal(pos))
+                except Exception:
+                    menu.exec_()
         except Exception:
             pass
 
