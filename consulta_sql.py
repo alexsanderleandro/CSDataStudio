@@ -38,13 +38,13 @@ class ColumnInfo:
 
 @dataclass
 class ForeignKey:
-    constraint_name: str
-    fk_schema: str
-    fk_table: str
-    fk_column: str
-    pk_schema: str
-    pk_table: str
-    pk_column: str
+    constraint_name: Optional[str] = None
+    fk_schema: Optional[str] = None
+    fk_table: Optional[str] = None
+    fk_column: Optional[str] = None
+    pk_schema: Optional[str] = None
+    pk_table: Optional[str] = None
+    pk_column: Optional[str] = None
 
 
 class JoinType(Enum):
@@ -54,7 +54,15 @@ class JoinType(Enum):
 
 
 class QueryBuilder:
-    def __init__(self, conn: pyodbc.Connection, pasta_metadados: str = "metadados"):
+    def __init__(self, conn: pyodbc.Connection = None, pasta_metadados: str = "metadados", **kwargs):
+        """Inicializa o QueryBuilder.
+
+        Compatibilidade: aceita tanto o parâmetro posicional `conn` quanto
+        o nome de parâmetro `connection` usado em testes antigos.
+        """
+        # aceitar `connection=` por compatibilidade de chamadas externas/tests
+        if conn is None and 'connection' in kwargs:
+            conn = kwargs.get('connection')
         self.conn = conn
         self.pasta_metadados = Path(pasta_metadados)
 
@@ -298,6 +306,75 @@ class QueryBuilder:
             sql += "\nGROUP BY " + ", ".join(group_by_parts)
 
         return sql.strip(), where_params
+
+    def build_query(self, tables: List[tuple], columns: List[tuple], joins=None, where_clause: Optional[str]=None, alias_mode: str='none') -> str:
+        """Gera uma SQL simples a partir de listas de tabelas e colunas.
+
+        Esta implementação é minimalista e atende aos testes unitários que
+        verificam ordem de JOINs e geração de ON quando há relacionamento
+        detectado por `find_relationship`.
+        """
+        # SELECT
+        sel_parts = []
+        for c in columns or []:
+            try:
+                sch, tbl, col = c
+                sel_parts.append(f"[{sch}].[{tbl}].[{col}]")
+            except Exception:
+                sel_parts.append(str(c))
+
+        sql = "SELECT " + (", ".join(sel_parts) if sel_parts else "*") + "\n"
+
+        # aliases (short: use table name as alias with possible suffix)
+        alias_map = {}
+        if alias_mode == 'short':
+            for i, (sch, tbl) in enumerate(tables):
+                # create a deterministic short alias
+                alias_map[(sch, tbl)] = (tbl[:3].lower() + (str(i) if i > 0 else ''))
+
+        # FROM
+        if not tables:
+            return sql
+
+        def qname(s, t):
+            return f"[{s}].[{t}]"
+
+        prev_sch, prev_tbl = tables[0]
+        if alias_mode == 'short' and (prev_sch, prev_tbl) in alias_map:
+            sql += f"FROM {qname(prev_sch, prev_tbl)} AS {alias_map[(prev_sch, prev_tbl)]}\n"
+        else:
+            sql += f"FROM {qname(prev_sch, prev_tbl)}\n"
+
+        # JOINs (preserve order)
+        for sch, tbl in tables[1:]:
+            # determine ON expression via relationship discovery
+            try:
+                fk = self.find_relationship(prev_tbl, tbl)
+            except Exception:
+                fk = None
+
+            if fk:
+                # try to use schema from fk if present, else default to provided schema
+                fk_schema = getattr(fk, 'fk_schema', sch) or sch
+                pk_schema = getattr(fk, 'pk_schema', prev_sch) or prev_sch
+                left = f"[{fk_schema}].[{fk.fk_table}].[{fk.fk_column}]"
+                right = f"[{pk_schema}].[{fk.pk_table}].[{fk.pk_column}]"
+                on_expr = f"{left} = {right}"
+            else:
+                on_expr = "1=1"
+
+            if alias_mode == 'short' and (sch, tbl) in alias_map:
+                sql += f"JOIN {qname(sch, tbl)} AS {alias_map[(sch, tbl)]} ON {on_expr}\n"
+            else:
+                sql += f"JOIN {qname(sch, tbl)} ON {on_expr}\n"
+
+            prev_sch, prev_tbl = sch, tbl
+
+        # WHERE
+        if where_clause:
+            sql += "WHERE " + where_clause + "\n"
+
+        return sql.strip()
 
     # ==========================================================
     # Execução

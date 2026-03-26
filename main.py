@@ -41,6 +41,28 @@ except Exception:
         return None
 
 
+import re
+
+def extrair_where_do_sql(sql: str) -> str:
+    """
+    Extrai somente a cláusula WHERE do SQL.
+    Retorna string vazia se não existir.
+    """
+    if not sql:
+        return ""
+
+    match = re.search(
+        r"\bWHERE\b(.*?)(\bGROUP BY\b|\bORDER BY\b|$)",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+
+    if match:
+        return match.group(1).strip()
+
+    return ""
+
+
 def _format_iso_timestamp(dt):
     """Formata um objeto datetime para string ISO sem microssegundos.
 
@@ -207,6 +229,7 @@ class LoginDialog(QDialog):
                         last_user = self.username_input.text().strip()
                     except Exception:
                         last_user = None
+                        last_user = None
                     try:
                         self._save_local_prefs({'last_db': last_db_text, 'last_user': last_user})
                     except Exception:
@@ -334,6 +357,7 @@ class QueryBuilderTab(QWidget):
     
     def __init__(self, query_builder: QueryBuilder, query_manager: QueryManager, session_logger: SessionLogger = None):
         super().__init__()
+        self._loading_query = False
         self.qb = query_builder
         self.qm = query_manager
         self.session_logger = session_logger
@@ -1284,7 +1308,6 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             try:
                 # marca para debugging e inspeção de parent
                 self.loaded_query_label.setObjectName('loaded_query_label')
-                print(f"DEBUG: created loaded_query_label, parent={self.loaded_query_label.parent()}")
             except Exception:
                 pass
         except Exception:
@@ -1325,7 +1348,8 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 if getattr(self, 'loaded_query_label', None) is not None:
                     actions_layout.addWidget(self.loaded_query_label)
                     try:
-                        print(f"DEBUG: added loaded_query_label to actions_layout, parent now={self.loaded_query_label.parent()}")
+                        # debug print removed; keep object in UI silently
+                        pass
                     except Exception:
                         pass
             except Exception:
@@ -3201,22 +3225,13 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             pass
     
     def generate_sql(self):
-        """Dispatcher: gera SQL conforme o modo selecionado.
-
-        Comportamento:
-        - Se `self.modo_consulta == 'metadados'` (padrão), delega para
-          `generate_sql_metadados()` que usa o QueryBuilder.
-        - Se `self.modo_consulta == 'manual'`, delega para
-          `generate_sql_manual()` que monta a SQL a partir das tabelas/colunas
-          selecionadas na aba (fluxo manual).
-
-        Importante: não misturar os dois fluxos na mesma função.
-        """
+        """Dispatcher: gera SQL conforme o modo selecionado."""
         modo = getattr(self, 'modo_consulta', 'metadados')
+
         if modo == 'manual':
-            return self.generate_sql_manual()
+            self.generate_sql_manual()
         else:
-            return self.generate_sql_metadados()
+            self.generate_sql_metadados()
 
     def generate_sql_metadados(self):
         """Gera a SQL baseada nos metadados (JSON) usando QueryBuilder."""
@@ -3590,362 +3605,101 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             )
 
     def generate_sql_manual(self):
-        """Gera a SQL no modo manual a partir das tabelas/colunas selecionadas.
-
-        Esta função monta uma SQL simples. Para fluxos mais avançados (joins
-        automáticos, aliases, etc.) expanda conforme necessidade.
         """
+        Gera o SQL no modo manual a partir de:
+        - SQL BASE (SELECT / FROM / JOIN)
+        - WHERE dinâmico (self._param_filters)
+
+        ÚNICO lugar onde o SQL completo é montado.
+        """
+        # 🔒 Nunca gerar SQL durante load
+        if getattr(self, '_loading_query', False):
+            return
+
         try:
+            # ---------- 1) Recupera SQL BASE ----------
+            # Prioridade:
+            # 1) SQL base já existente (ex: carregado de consulta)
+            # 2) Montagem via UI (tabela + colunas)
+            base_sql = ""
 
-            # Coleta colunas selecionadas
-            cols = [self.selected_columns_list.item(i).text() for i in range(self.selected_columns_list.count())]
-
-            # Coleta tabelas selecionadas (raw como '[schema].TableName')
-            tables_raw = [self._get_selected_table_raw_text(self.selected_tables_list.item(i)) for i in range(self.selected_tables_list.count())]
-            #if not tables_raw:
-            #    QMessageBox.warning(self, "Aviso", "Selecione ao menos uma fonte (tabela) para o modo manual")
-            #    return
-
-            # Compute aliases (kept only to translate existing expressions),
-            # but do NOT use reduced aliases in the generated SQL: always use
-            # fully qualified table names in the FROM and in field references.
-            aliases = self._compute_aliases_for_selected_tables()
-
-            from_parts = []
-            # also build a small lookup for table names -> (schema, table)
-            selected_tables = []
-            for t in tables_raw:
-                parts = t.split('.')
-                schema = parts[0].strip('[]')
-                table_name = parts[1].split('(')[0].strip()
-                alias = aliases.get((schema, table_name))
-                selected_tables.append((schema, table_name))
-                # do not use alias in FROM; always use fully qualified table name
-                from_parts.append((schema, table_name))
-
-            # Se há joins especificados em selected_tables (armazenados em UserRole+1),
-            # construir cláusula FROM usando JOIN ... ON quando possível. Caso contrário,
-            # usar a lista separada por vírgulas (comportamento antigo).
+            # Caso 1: usuário já tem SQL carregado
             try:
-                any_join = False
-                for i in range(self.selected_tables_list.count()):
-                    try:
-                        it = self.selected_tables_list.item(i)
-                        jt = it.data(Qt.UserRole + 1)
-                        if jt:
-                            any_join = True
-                            break
-                    except Exception:
+                base_sql = self.manual_sql_preview.toPlainText().strip()
+            except Exception:
+                base_sql = ""
+
+            # Remove WHERE antigo do SQL base (se existir)
+            if base_sql:
+                base_sql = base_sql.split("WHERE")[0].strip()
+
+            # Caso 2: se não houver SQL base, monta via UI
+            if not base_sql:
+                tabela = getattr(self, 'manual_table', None)
+                colunas = getattr(self, 'manual_columns', None)
+
+                if not tabela or not colunas:
+                    return
+
+                cols_sql = ",\n    ".join(colunas)
+                base_sql = f"SELECT\n    {cols_sql}\nFROM {tabela}"
+
+            # ---------- 2) Monta WHERE dinâmico ----------
+            where_parts = []
+
+            for item in (self._param_filters or []):
+                try:
+                    expr, params, meta, connector = None, None, None, 'AND'
+
+                    if isinstance(item, (list, tuple)):
+                        if len(item) > 0: expr = item[0]
+                        if len(item) > 3: connector = item[3] or 'AND'
+                    elif isinstance(item, dict):
+                        expr = item.get('expr')
+                        connector = item.get('connector', 'AND')
+
+                    if not expr:
                         continue
-            except Exception:
-                any_join = False
 
-            if not any_join:
-                # comportamento legado: lista separada por vírgulas
-                from_clause = ', '.join([f"[{s}].[{t}]" for s, t in from_parts])
-            else:
-                # construir com JOINs, tentando inferir ON via FKs
-                qb_local = getattr(self, 'qb', None)
-                # base = primeira tabela
-                if from_parts:
-                    base_schema, base_table = from_parts[0]
-                    # always append WITH (NOLOCK) for manual mode as requested
-                    base_repr = f"[{base_schema}].[{base_table}] WITH (NOLOCK)"
-                else:
-                    base_repr = ''
-                join_clauses = []
-                # iterar tabelas subsequentes e tentar aplicar JOIN quando o usuário indicou
-                for idx in range(1, len(from_parts)):
-                    s, tname = from_parts[idx]
-                    # join type armazenado no item correspondente
-                    try:
-                        item = self.selected_tables_list.item(idx)
-                        join_type = item.data(Qt.UserRole + 1)
-                    except Exception:
-                        join_type = None
-
-                    # ensure WITH (NOLOCK) right after table name in FROM/JOIN
-                    table_repr = f"[{s}].[{tname}] WITH (NOLOCK)"
-
-                    if join_type and qb_local is not None:
-                        # se o usuário já definiu manualmente a expressão ON ao adicionar a tabela,
-                        # ela pode ter sido armazenada em UserRole+2; usar sem tentar inferir FKs
-                        try:
-                            stored_on = item.data(Qt.UserRole + 2)
-                            if stored_on:
-                                join_clauses.append(f"{join_type} {table_repr} ON {stored_on}")
-                                continue
-                        except Exception:
-                            pass
-                        # tentar encontrar FKs entre a tabela anterior (idx-1) e esta
-                        on_parts = []
-                        try:
-                            # primeiro, ver se a tabela anterior possui FK apontando para a atual
-                            prev_s, prev_t = from_parts[idx - 1]
-                            fks_prev = qb_local.get_foreign_keys(prev_s, prev_t) or []
-                            for fk in fks_prev:
-                                try:
-                                    if fk.pk_table.lower() == tname.lower() and fk.pk_schema.lower() == s.lower():
-                                        # prev.prev_col = cur.pk_col
-                                        left = f"[{prev_s}].[{prev_t}].[{fk.fk_column}]"
-                                        right = f"[{s}].[{tname}].[{fk.pk_column}]"
-                                        on_parts.append(f"{left} = {right}")
-                                except Exception:
-                                    continue
-                        except Exception:
-                            pass
-
-                        try:
-                            # segundo, ver se a tabela atual possui FK apontando para a anterior
-                            fks_cur = qb_local.get_foreign_keys(s, tname) or []
-                            for fk in fks_cur:
-                                try:
-                                    if fk.pk_table.lower() == prev_t.lower() and fk.pk_schema.lower() == prev_s.lower():
-                                        left = f"[{s}].[{tname}].[{fk.fk_column}]"
-                                        right = f"[{prev_s}].[{prev_t}].[{fk.pk_column}]"
-                                        on_parts.append(f"{left} = {right}")
-                                except Exception:
-                                    continue
-                        except Exception:
-                            pass
-
-                        # se não encontrou relacionamentos com a tabela anterior, tentar procurar
-                        # em qualquer tabela já adicionada (busca mais ampla)
-                        if not on_parts:
-                            try:
-                                for jprev in range(0, idx):
-                                    ps, pt = from_parts[jprev]
-                                    try:
-                                        fks = qb_local.get_foreign_keys(ps, pt) or []
-                                        for fk in fks:
-                                            if fk.pk_table.lower() == tname.lower() and fk.pk_schema.lower() == s.lower():
-                                                left = f"[{ps}].[{pt}].[{fk.fk_column}]"
-                                                right = f"[{s}].[{tname}].[{fk.pk_column}]"
-                                                on_parts.append(f"{left} = {right}")
-                                    except Exception:
-                                        pass
-                                    try:
-                                        fks2 = qb_local.get_foreign_keys(s, tname) or []
-                                        for fk in fks2:
-                                            if fk.pk_table.lower() == pt.lower() and fk.pk_schema.lower() == ps.lower():
-                                                left = f"[{s}].[{tname}].[{fk.fk_column}]"
-                                                right = f"[{ps}].[{pt}].[{fk.pk_column}]"
-                                                on_parts.append(f"{left} = {right}")
-                                    except Exception:
-                                        pass
-                                    if on_parts:
-                                        break
-                            except Exception:
-                                pass
-
-                        if on_parts:
-                            on_expr = ' AND '.join(on_parts)
-                            join_clauses.append(f"{join_type} {table_repr} ON {on_expr}")
-                        else:
-                                    # Se não encontramos FK automaticamente, pedir ao usuário
-                                    try:
-                                        # prior_tables: todas as tabelas já adicionadas antes desta
-                                        prior_tables = [(ps, pt) for ps, pt in from_parts[:idx]]
-                                        user_on = self._ask_user_for_join_on(prior_tables, (s, tname), join_type)
-                                        if user_on:
-                                            join_clauses.append(f"{join_type} {table_repr} ON {user_on}")
-                                        else:
-                                            # fallback para não travar: adicionar como tabela separada (vírgula)
-                                            join_clauses.append(f", {table_repr}")
-                                    except Exception:
-                                        join_clauses.append(f", {table_repr}")
+                    if not where_parts:
+                        where_parts.append(expr)
                     else:
-                        # sem join type: manter como tabela separada
-                        join_clauses.append(f", {table_repr}")
+                        where_parts.append(f"{connector} {expr}")
 
-                # montar from_clause como base + joins
-                # Formatação: colocar cada JOIN (ou tabela fallback) em sua própria linha
-                if base_repr:
-                    if join_clauses:
-                        normalized = []
-                        for jc in join_clauses:
-                            try:
-                                jc_strip = jc.strip()
-                                # preservar entradas que começaram com vírgula (fallback)
-                                if jc_strip.startswith(','):
-                                    # manter a vírgula, mas aplicar indentação de 2 espaços
-                                    jc_clean = jc_strip.lstrip(',').strip()
-                                    normalized.append('  , ' + jc_clean)
-                                else:
-                                    # adicionar 2 espaços de indentação antes do JOIN
-                                    normalized.append('  ' + jc_strip)
-                            except Exception:
-                                normalized.append('  ' + jc)
-                        from_clause = base_repr + '\n' + '\n'.join(normalized)
-                    else:
-                        from_clause = base_repr
-                else:
-                    # sem base (caso raro), listar cada tabela em nova linha
-                    # prefix each table with two-space indent for readability
-                    lines = [f"  [{s}].[{t}] WITH (NOLOCK)" for s, t in from_parts]
-                    from_clause = ',\n'.join(lines)
-            
-
-            # Helper para resolver um campo (ex: 'table.col' ou '[schema].[table].[col]') para usar alias
-            def _resolve_field_to_alias(field_text: str):
-                # tenta formatos: [schema].[table].[col], schema.table.col, table.col
-                try:
-                    # remove espaços desnecessários
-                    ft = field_text.strip()
-                    # bracketed parts
-                    m = re.match(r"^(?:\[?([A-Za-z0-9_]+)\]?\.)?(?:\[?([A-Za-z0-9_]+)\]?\.)?\[?([A-Za-z0-9_]+)\]?$")
-                    if m:
-                        # groups: maybe schema, maybe table, column
-                        g1 = m.group(1)
-                        g2 = m.group(2)
-                        g3 = m.group(3)
-                        if g2 and g1:
-                            # schema.table.col
-                            schema = g1; table_name = g2; col = g3
-                        elif g2 and not g1:
-                            # table.col (captured as g2=table, g3=col)
-                            table_name = g2; col = g3; schema = None
-                        else:
-                            # only col? fallback
-                            return field_text
-                        # Always return fully qualified reference when possible
-                        if schema:
-                            return f"[{schema}].[{table_name}].[{col}]"
-                        else:
-                            # try to infer schema from selected_tables
-                            for s, tname in selected_tables:
-                                if tname.lower() == table_name.lower():
-                                    return f"[{s}].[{table_name}].[{col}]"
-                            # fallback to unqualified but bracketed table
-                            return f"[{table_name}].[{col}]"
                 except Exception:
-                    pass
-                return field_text
+                    continue
 
-            # Build select clause: if user selected columns, try to use aliases for them
-            # If no columns selected, do NOT show the default 'SELECT * FROM' in the
-            # preview — instead only show the FROM clause (or nothing if no tables).
-            if not cols:
-                select_block = None
-            else:
-                cleaned = []
-                for c in cols:
-                    m = re.match(r"^([^\(]+)\s*(?:\(.*\))?$", c)
-                    raw_field = m.group(1).strip() if m else c
-                    cleaned.append(_resolve_field_to_alias(raw_field))
-                # montar SELECT em múltiplas linhas: uma linha 'SELECT' e
-                # cada campo em sua própria linha com 4 espaços de indentação
-                try:
-                    lines = ["SELECT"]
-                    for i, fld in enumerate(cleaned):
-                        comma = ',' if i < len(cleaned) - 1 else ''
-                        lines.append('    ' + fld + comma)
-                    select_block = '\n'.join(lines)
-                except Exception:
-                    select_block = 'SELECT ' + ', '.join(cleaned)
+            where_sql = ""
+            if where_parts:
+                where_sql = "WHERE " + "\n".join(where_parts)
 
-            # Where (opcional) - prefer filtros parametrizados
-            where_clause = ''
-            if getattr(self, '_param_filters', None):
-                try:
-                    preview_items = []
-                    for f in (self._param_filters or []):
-                        try:
-                            if isinstance(f, (list, tuple)):
-                                expr = f[0] if len(f) >= 1 else str(f)
-                                conn = f[3] if len(f) >= 4 else 'AND'
-                            elif isinstance(f, dict):
-                                expr = f.get('expr')
-                                conn = f.get('connector', 'AND')
-                            else:
-                                expr = str(f); conn = 'AND'
-                            # replace qualified field references with aliases
-                            try:
-                                # for each selected table, replace occurrences of alias or table.col
-                                new_expr = expr
-                                # first replace alias.[col] (if any) to fully qualified
-                                for (schema, table_name), alias in aliases.items():
-                                    if not alias:
-                                        continue
-                                    try:
-                                        pat_alias = re.compile(rf"\b{re.escape(alias)}\s*\.\s*\[?([A-Za-z0-9_]+)\]?", re.IGNORECASE)
-                                        new_expr = pat_alias.sub(lambda m, s=schema, t=table_name: f"[{s}].[{t}].[{m.group(1)}]", new_expr)
-                                    except Exception:
-                                        pass
-                                # then replace unqualified table.col or table.[col] with fully qualified
-                                for (schema, table_name) in selected_tables:
-                                    try:
-                                        pat_table = re.compile(rf"\b{re.escape(table_name)}\s*\.\s*\[?([A-Za-z0-9_]+)\]?", re.IGNORECASE)
-                                        new_expr = pat_table.sub(lambda m, s=schema, t=table_name: f"[{s}].[{t}].[{m.group(1)}]", new_expr)
-                                    except Exception:
-                                        pass
-                                expr = new_expr
-                            except Exception:
-                                pass
-                            preview_items.append((expr, conn))
-                        except Exception:
-                            continue
-                    if preview_items:
-                        first_expr = preview_items[0][0]
-                        w = first_expr
-                        for expr, conn in preview_items[1:]:
-                            w = f"{w} {conn} {expr}"
-                        where_clause = w
-                    else:
-                        where_clause = ''
-                except Exception:
-                    try:
-                        parts = []
-                        for f in (self._param_filters or []):
-                            if isinstance(f, (list, tuple)) and len(f) >= 1:
-                                parts.append(f[0])
-                            else:
-                                parts.append(str(f))
-                        where_clause = ' AND '.join(parts).strip()
-                    except Exception:
-                        where_clause = ''
-            else:
-                where_clause = self.where_input.toPlainText().strip()
+            # ---------- 3) SQL FINAL ----------
+            final_sql = base_sql
+            if where_sql:
+                final_sql = f"{base_sql}\n{where_sql}"
 
-            # Monta SQL levando em conta o comportamento desejado quando
-            # nenhuma coluna foi selecionada: não exibimos 'SELECT * FROM'.
-            if not select_block:
-                if from_clause:
-                    sql = f"FROM {from_clause}"
-                else:
-                    sql = ''
-            else:
-                # select_block may already contain line breaks; append FROM after it
-                sql = f"{select_block} FROM {from_clause}"
-            # Garantir que a cláusula WHERE esteja em nova linha e com indentação
-            # de 4 espaços para legibilidade
-            if where_clause:
-                try:
-                    sql += '\n' + '    WHERE ' + where_clause
-                except Exception:
-                    sql += '\nWHERE ' + where_clause
-
-            # GROUP BY handling removed (feature deferred)
-
-            # Preview
-            self.sql_preview.setPlainText(sql)
-            # também atualiza o preview da aba Manual, se existir
+            # ---------- 4) Atualiza preview ----------
             try:
-                if getattr(self, 'manual_sql_preview', None) is not None:
-                    self.manual_sql_preview.setPlainText(sql)
-            except Exception:
-                pass
-            self.current_sql = sql
-
-            # Log
-            try:
-                if getattr(self, 'session_logger', None):
-                    self.session_logger.log('generate_sql', 'Gerou preview de SQL (manual)', {'preview': sql[:200]})
+                self.manual_sql_preview.blockSignals(True)
+                self.manual_sql_preview.setPlainText(final_sql)
+                self.manual_sql_preview.blockSignals(False)
             except Exception:
                 pass
 
-        except Exception as e:
-            QMessageBox.critical(self, "Erro ao gerar SQL (manual)", f"{e}")
+            try:
+                if getattr(self, 'sql_preview', None):
+                    self.sql_preview.blockSignals(True)
+                    self.sql_preview.setPlainText(final_sql)
+                    self.sql_preview.blockSignals(False)
+            except Exception:
+                pass
+
+            # ---------- 5) Armazena SQL atual ----------
+            self.current_sql = final_sql
+
+        except Exception:
+            logging.exception("Erro ao gerar SQL manual")
+
     
     def _ask_user_for_join_on(self, prior_tables: list, current_table: tuple, join_type: str = 'INNER JOIN', existing_on: Optional[str] = None) -> Optional[str]:
         """Mostra diálogo para o usuário escolher par de colunas para usar em ON
@@ -5053,289 +4807,101 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
                 return expr
 
     def _refresh_filters_list(self):
-        """Atualiza `self.filters_list` a partir de `self._param_filters` e reconstroi o preview em `where_input`."""
-        try:
-            # debug removed: _refresh_filters_list entry logs
-            # salva texto atual do WHERE para permitir desfazer
-            try:
-                prev_where = self.where_input.toPlainText()
-            except Exception:
-                prev_where = ''
+        """
+        Atualiza a UI de filtros e o campo WHERE dinâmico.
+        NÃO gera SQL completo.
+        """
+        is_loading = getattr(self, '_loading_query', False)
 
+        # ---------- 1) Normaliza filtros ----------
+        filters = self._param_filters or []
+
+        # ---------- 2) Atualiza lista visual ----------
+        try:
+            self.filters_list.blockSignals(True)
             self.filters_list.clear()
-            # (Removido: não mantemos mais a lista separada de "filtros incluídos")
-            previews = []
-            for item in (self._param_filters or []):
-                # suportar formatos antigos e novos
-                expr = None; params = None; meta = None; connector = 'AND'
+
+            previews = []  # [(expr, connector)]
+            for item in filters:
                 try:
+                    expr, params, meta, connector = None, None, None, 'AND'
+
                     if isinstance(item, (list, tuple)):
-                        if len(item) >= 2:
-                            expr = item[0]; params = item[1]
-                        if len(item) >= 3:
-                            meta = item[2]
-                        if len(item) >= 4:
-                            try:
-                                connector = item[3]
-                            except Exception:
-                                connector = 'AND'
+                        if len(item) > 0: expr = item[0]
+                        if len(item) > 1: params = item[1]
+                        if len(item) > 2: meta = item[2]
+                        if len(item) > 3: connector = item[3] or 'AND'
                     elif isinstance(item, dict):
-                        expr = item.get('expr'); params = item.get('params'); meta = item.get('meta')
+                        expr = item.get('expr')
+                        params = item.get('params')
+                        meta = item.get('meta')
                         connector = item.get('connector', 'AND')
+
+                    if not expr:
+                        continue
+
+                    pv = self._format_param_filter_preview(expr, params)
+                    previews.append((pv, connector))
+
+                    it = QListWidgetItem('')
+                    it.setData(Qt.UserRole, (expr, params, meta, connector))
+                    self.filters_list.addItem(it)
+
+                    lbl = QLabel(pv)
+                    lbl.setWordWrap(True)
+                    lbl.setTextInteractionFlags(lbl.textInteractionFlags() | Qt.TextSelectableByMouse)
+
+                    w = QWidget()
+                    h = QHBoxLayout(w)
+                    h.setContentsMargins(6, 2, 6, 2)
+                    h.addWidget(lbl)
+                    h.addStretch()
+
+                    self.filters_list.setItemWidget(it, w)
+                    it.setSizeHint(w.sizeHint())
+
                 except Exception:
                     continue
-                pv = self._format_param_filter_preview(expr, params)
-                # criar item vazio (texto será mostrado pelo widget embutido)
-                it = QListWidgetItem()
-                # armazenar a tupla (expr, params, meta, connector) no UserRole
-                it.setData(Qt.UserRole, (expr, params, meta, connector))
-                self.filters_list.addItem(it)
-                # tentar criar widget customizado (combo de conector + texto)
-                try:
-                    container = QWidget()
-                    h = QHBoxLayout(container)
-                    h.setContentsMargins(6, 2, 6, 2)
-                    # embed a small combo to allow editing the connector per-item
-                    conn_combo = QComboBox()
-                    conn_combo.addItems(["AND", "OR"])
-                    try:
-                        conn_combo.setCurrentText(str(connector).strip().upper())
-                    except Exception:
-                        try:
-                            conn_combo.setCurrentText('AND')
-                        except Exception:
-                            pass
-                    conn_combo.setFixedWidth(64)
-                    # style the combo a bit for visibility
-                    conn_combo.setStyleSheet('padding:2px; border-radius:6px;')
-                    expr_lbl = QLabel(pv)
-                    expr_lbl.setWordWrap(True)
-                    expr_lbl.setTextInteractionFlags(expr_lbl.textInteractionFlags() | Qt.TextSelectableByMouse)
-                    try:
-                        # reduzir fonte para melhorar encaixe em telas menores
-                        f = expr_lbl.font()
-                        f.setPointSize(10)
-                        expr_lbl.setFont(f)
-                    except Exception:
-                        pass
-                    try:
-                        expr_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                    except Exception:
-                        pass
-                    try:
-                        # aplicar elisão horizontal para textos muito longos
-                        max_w = 0
-                        try:
-                            max_w = self.filters_list.viewport().width() - 100
-                        except Exception:
-                            max_w = 300
-                        if max_w > 30:
-                            fm = QFontMetrics(expr_lbl.font())
-                            el = fm.elidedText(pv, Qt.ElideRight, max_w)
-                            expr_lbl.setText(el)
-                    except Exception:
-                        pass
-                    # NOTE: removemos o widget de seleção do conector da lista "Gerenciar filtros"
-                    # para simplificar a UI conforme solicitado. O conector continua sendo
-                    # armazenado em Qt.UserRole para uso na geração da SQL, mas não é
-                    # exibido nem editável diretamente nesta lista.
-                    h.addWidget(expr_lbl)
-                    h.addStretch()
-                    self.filters_list.setItemWidget(it, container)
-                    # assegurar que o QListWidgetItem tenha o tamanho do widget
-                    try:
-                        it.setSizeHint(container.sizeHint())
-                    except Exception:
-                        pass
-                    # limpar texto do item para evitar sobreposição entre o
-                    # texto interno do QListWidgetItem e o widget customizado
-                    try:
-                        it.setText('')
-                    except Exception:
-                        pass
-                    # NOTE: população da lista `manual_filters_list` é feita
-                    # posteriormente de forma centralizada (com base em `previews`).
-                    # Removemos a tentativa de inserir itens aqui para evitar
-                    # duplicidade e condições de corrida quando o widget ainda
-                    # não foi completamente inicializado.
-                    # (Removido) não conectamos mais signals para edição do conector aqui.
-                except Exception:
-                    # fallback: item de texto simples
-                    pass
-                previews.append((pv, connector))
-                # (Removido: anteriormente adicionávamos também na lista central de
-                # filtros incluídos. Agora todo filtro vai para o gerenciador de
-                # filtros (`self.filters_list`) e não mantemos essa visualização
-                # duplicada.)
 
-            # debug removed: previews length/content logs
+        finally:
+            try:
+                self.filters_list.blockSignals(False)
+            except Exception:
+                pass
 
-            # sincroniza WHERE sempre com os filtros parametrizados
-            # monta where respeitando conectores por filtro (armazenados como 4a posição)
-            new_where = ''
-            try:
-                if previews:
-                    # previews is list of (pv, connector)
-                    first = previews[0][0]
-                    parts = [first]
-                    for pv, conn in previews[1:]:
-                        parts.append(f" {conn} {pv}")
-                    new_where = ''.join(parts)
-                else:
-                    new_where = ''
-            except Exception:
-                # fallback para compatibilidade: juntar com AND
-                try:
-                    new_where = ' AND '.join(p[0] if isinstance(p, tuple) else str(p) for p in previews)
-                except Exception:
-                    new_where = ''
-            # se houve alteração efetiva no WHERE, guarda no histórico para permitir múltiplos undo
-            if new_where != prev_where:
-                try:
-                    # inicializa history se necessário
-                    if not hasattr(self, '_where_history'):
-                        self._where_history = []
-                        self._where_history_limit = 50
-                    # empilha valor anterior
-                    self._where_history.append(prev_where)
-                    # clear redo stack on new action
-                    try:
-                        self._where_redo = []
-                    except Exception:
-                        pass
-                    # limita tamanho
-                    if len(self._where_history) > getattr(self, '_where_history_limit', 50):
-                        self._where_history.pop(0)
-                except Exception:
-                    pass
-            # habilita/desabilita botão de desfazer conforme histórico
-            try:
-                has_hist = bool(getattr(self, '_where_history', []))
-                self.btn_undo_where.setEnabled(has_hist)
-            except Exception:
-                pass
-            try:
-                self.where_input.setPlainText(new_where)
-            except Exception:
-                pass
-            # atualizar lista de filtros na aba Manual (se presente)
-            try:
-                if getattr(self, 'manual_filters_list', None):
-                    try:
-                        self.manual_filters_list.clear()
-                        # debug removed: manual_filters_list cleared
-                        # Simpler presentation: create plain textual QListWidgetItem per filter
-                        for pv, conn in previews:
-                            try:
-                                # Prepare display text (elide if needed)
-                                try:
-                                    max_w_m = self.manual_filters_list.viewport().width() - 40
-                                except Exception:
-                                    max_w_m = 300
-                                display_text = pv
-                                try:
-                                    if max_w_m > 30:
-                                        fm = QFontMetrics(self.manual_filters_list.font())
-                                        display_text = fm.elidedText(pv, Qt.ElideRight, max_w_m)
-                                except Exception:
-                                    pass
+        # ---------- 3) Monta WHERE dinâmico ----------
+        where_text = ""
+        if previews:
+            parts = [previews[0][0]]
+            for pv, conn in previews[1:]:
+                parts.append(f"{conn} {pv}")
+            where_text = "\n".join(parts)
 
-                                mit = QListWidgetItem(display_text)
-                                mit.setData(Qt.UserRole, (pv, conn))
-                                self.manual_filters_list.addItem(mit)
-                            except Exception:
-                                logging.exception("_refresh_filters_list: error adding manual item (simple)")
-                        # debug removed: manual_filters_list.count
-                        # Forçar refresh/visibilidade dos ícones nos widgets adicionados.
-                        try:
-                            from PyQt5.QtWidgets import QToolButton
-                            for ii in range(self.manual_filters_list.count()):
-                                try:
-                                    it = self.manual_filters_list.item(ii)
-                                    w = self.manual_filters_list.itemWidget(it)
-                                    if not w:
-                                        continue
-                                    # procurar toolbutton(s) e forçar show/repaint
-                                    for tb in w.findChildren(QToolButton):
-                                        try:
-                                            tb.setVisible(True)
-                                            tb.show()
-                                            tb.repaint()
-                                        except Exception:
-                                            pass
-                                    # garantir que o widget pai também é atualizado
-                                    try:
-                                        w.update()
-                                        w.repaint()
-                                    except Exception:
-                                        pass
-                                except Exception:
-                                    pass
-                            try:
-                                self.manual_filters_list.update()
-                                self.manual_filters_list.repaint()
-                            except Exception:
-                                pass
-                        except Exception:
-                            try:
-                                # fallback: apenas atualizar a lista
-                                self.manual_filters_list.update()
-                            except Exception:
-                                pass
-                    except Exception:
-                        logging.exception("_refresh_filters_list: error populating manual_filters_list")
-                    # Fallback simples: se a população com widgets não adicionou
-                    # itens por algum motivo (por exemplo quando o viewport width
-                    # ainda é 0 em inicializações rápidas), adicionamos uma
-                    # versão textual simples dos itens para que o usuário veja
-                    # imediatamente os filtros recém-criados.
-                    try:
-                        if getattr(self, 'manual_filters_list', None) is not None and self.manual_filters_list.count() == 0 and previews:
-                            # debug removed: manual_filters_list empty after widget population
-                            for pv, conn in previews:
-                                try:
-                                    mit_simple = QListWidgetItem(pv)
-                                    mit_simple.setData(Qt.UserRole, (pv, conn))
-                                    self.manual_filters_list.addItem(mit_simple)
-                                except Exception:
-                                    logging.exception("_refresh_filters_list: error adding simple fallback item")
-                            # debug removed: manual_filters_list.count_after_fallback
-                    except Exception:
-                        logging.exception("_refresh_filters_list: error during manual list fallback population")
-            except Exception:
-                pass
-            # If we're in manual mode, regenerate the manual SQL preview so
-            # the newly added filters are reflected immediately without
-            # requiring the user to click 'Gerar SQL'. This keeps behavior
-            # intuitive when users add filters via context menu.
-            try:
-                if getattr(self, 'modo_consulta', 'metadados') == 'manual':
-                    # regenerate manual SQL preview and current_sql
-                    try:
-                        self.generate_sql_manual()
-                        # show a small badge with fade animation to indicate automatic regeneration
-                        try:
-                            try:
-                                if getattr(self, '_flash_auto_update_badge', None):
-                                    # call method if present
-                                    self._flash_auto_update_badge()
-                                else:
-                                    # fallback behavior
-                                    if getattr(self, 'auto_update_badge', None):
-                                        self.auto_update_badge.setVisible(True)
-                                        QTimer.singleShot(1500, lambda: self.auto_update_badge.setVisible(False))
-                                    else:
-                                        self.statusBar().showMessage('SQL atualizada automaticamente', 1500)
-                            except Exception:
-                                pass
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"Erro ao atualizar lista de filtros: {e}")
+        # ---------- 4) Atualiza campo WHERE ----------
+        try:
+            self.where_input.blockSignals(True)
+            self.where_input.setPlainText(where_text)
+            self.where_input.blockSignals(False)
+        except Exception:
+            pass
+
+        # ---------- 5) Atualiza lista simples (aba Manual, se existir) ----------
+        try:
+            if getattr(self, 'manual_filters_list', None):
+                self.manual_filters_list.blockSignals(True)
+                self.manual_filters_list.clear()
+                for pv, conn in previews:
+                    it = QListWidgetItem(pv)
+                    it.setData(Qt.UserRole, (pv, conn))
+                    self.manual_filters_list.addItem(it)
+                self.manual_filters_list.blockSignals(False)
+        except Exception:
+            pass
+
+        # ---------- 6) Regenera SQL APENAS fora do load ----------
+        if not is_loading and getattr(self, 'modo_consulta', 'metadados') == 'manual':
+            self.generate_sql_manual()
+
 
     def _remove_selected_filter(self):
         """Remove os filtros selecionados na lista (mantém ordem dos demais)."""
@@ -6942,8 +6508,9 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             QMessageBox.critical(self, "Erro", f"Erro ao salvar consulta:\n{str(e)}")
     
     def load_query(self):
-        """Carrega uma consulta salva"""
-        # listar apenas consultas compatíveis com o modo atual (M ou P)
+        """Carrega uma consulta salva e restaura corretamente o modo manual"""
+        self._loading_query = True
+
         try:
             modo = getattr(self, 'modo_consulta', 'metadados')
             tag = 'M' if modo == 'manual' else 'P'
@@ -6951,12 +6518,12 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             tag = None
 
         queries = self.qm.list_queries(tag=tag) if tag else self.qm.list_queries()
-        
+
         if not queries:
             QMessageBox.information(self, "Informação", "Nenhuma consulta salva encontrada")
+            self._loading_query = False
             return
-        
-        # Mostra lista de consultas
+
         query_names = [q.name for q in queries]
         name, ok = QInputDialog.getItem(
             self,
@@ -6966,134 +6533,100 @@ QListView::item:selected { background-color: #3874f2; color: #ffffff; }
             0,
             False
         )
-        
+
         if not ok or not name:
+            self._loading_query = False
             return
-        
+
         query = self.qm.get_query(name)
-        if query:
-            self.sql_preview.setPlainText(query.sql)
-            try:
-                if getattr(self, 'session_logger', None):
-                    self.session_logger.log('load_query', f"Carregou consulta '{query.name}'", {'name': query.name})
-            except Exception:
-                pass
-            # Ao carregar: apenas popular o preview e o campo de nome no formulário
-            try:
-                if getattr(self, 'manual_sql_preview', None) is not None:
-                    self.manual_sql_preview.setPlainText(query.sql)
-            except Exception:
-                pass
-            try:
-                if getattr(self, 'manual_loaded_name_edit', None) is not None:
-                    try:
-                        self.manual_loaded_name_edit.blockSignals(True)
-                        self.manual_loaded_name_edit.setText(query.name)
-                    finally:
-                        try:
-                            self.manual_loaded_name_edit.blockSignals(False)
-                        except Exception:
-                            pass
-                if getattr(self, 'loaded_query_label', None) is not None:
-                    self.loaded_query_label.setText(f"Consulta carregada: {query.name}")
-                    self.loaded_query_label.setVisible(True)
-            except Exception:
-                pass
-            # Restaurar estado da UI se disponível (apenas para modo manual)
-            try:
-                modo = getattr(self, 'modo_consulta', 'metadados')
-                if modo == 'manual' and getattr(query, 'ui_state', None):
-                    ui = query.ui_state
-                    # Selected tables
-                    try:
-                        self.selected_tables_list.clear()
-                        for t in ui.get('selected_tables', []) or []:
-                            try:
-                                raw = t.get('raw') if isinstance(t, dict) else None
-                                if not raw:
-                                    continue
-                                jt = t.get('join_type') if isinstance(t, dict) else None
-                                on_expr = t.get('on') if isinstance(t, dict) else None
-                                # build display text; nr will be fixed by renumber
-                                display = raw
-                                if jt:
-                                    display = f"{raw} [{jt}]"
-                                li = QListWidgetItem(display)
-                                li.setData(Qt.UserRole, raw)
-                                try:
-                                    li.setData(Qt.UserRole + 1, jt)
-                                except Exception:
-                                    pass
-                                try:
-                                    li.setData(Qt.UserRole + 2, on_expr)
-                                except Exception:
-                                    pass
-                                # clear any pending marker
-                                try:
-                                    li.setData(Qt.UserRole + 99, None)
-                                except Exception:
-                                    pass
-                                self.selected_tables_list.addItem(li)
-                            except Exception:
-                                continue
-                        try:
-                            self._renumber_selected_tables()
-                        except Exception:
-                            pass
-                        try:
-                            self.update_available_columns()
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
+        if not query:
+            self._loading_query = False
+            return
 
-                    # selected columns
-                    try:
-                        self.selected_columns_list.clear()
-                        for c in ui.get('selected_columns', []) or []:
-                            try:
-                                it = QListWidgetItem(c)
-                                self.selected_columns_list.addItem(it)
-                            except Exception:
-                                continue
-                    except Exception:
-                        pass
+        # ==========================
+        # SQL COMPLETO → Consulta gerada
+        # ==========================
+        sql = query.sql or ""
 
-                    # filters
-                    try:
-                        self._param_filters = ui.get('filters', []) or []
-                        try:
-                            self._refresh_filters_list()
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
+        if getattr(self, 'manual_sql_preview', None):
+            self.manual_sql_preview.blockSignals(True)
+            self.manual_sql_preview.setPlainText(sql)
+            self.manual_sql_preview.blockSignals(False)
 
-                    # recompute SQL preview
-                    try:
-                        self.generate_sql_manual()
-                        if getattr(self, 'manual_sql_preview', None) is not None:
-                            # update the preview text with regenerated SQL
-                            self.manual_sql_preview.setPlainText(self.sql_preview.toPlainText() if getattr(self, 'sql_preview', None) is not None else '')
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            try:
-                if getattr(self, 'session_logger', None):
-                    self.session_logger.log('load_query', f"Carregou consulta '{query.name}'", {'name': query.name})
-            except Exception:
-                pass
-            try:
-                # mostrar pequena notificação na status bar se disponível
-                if getattr(self, 'statusBar', None):
-                    try:
-                        self.statusBar().showMessage(f"Consulta '{query.name}' carregada", 3000)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+        if getattr(self, 'sql_preview', None):
+            self.sql_preview.blockSignals(True)
+            self.sql_preview.setPlainText(sql)
+            self.sql_preview.blockSignals(False)
 
+        # ==========================
+        # Atualiza nome / label
+        # ==========================
+        try:
+            if getattr(self, 'manual_loaded_name_edit', None):
+                self.manual_loaded_name_edit.blockSignals(True)
+                self.manual_loaded_name_edit.setText(query.name)
+                self.manual_loaded_name_edit.blockSignals(False)
+
+            if getattr(self, 'loaded_query_label', None):
+                self.loaded_query_label.setText(f"Consulta carregada: {query.name}")
+                self.loaded_query_label.setVisible(True)
+        except Exception:
+            pass
+
+        # ==========================
+        # RESTAURA FILTROS (WHERE)
+        # ==========================
+        self._param_filters = []
+
+        try:
+            ui_state = getattr(query, 'ui_state', None) or {}
+            filtros = ui_state.get("filters", [])
+
+            if filtros:
+                # usa filtros salvos
+                for f in filtros:
+                    try:
+                        self._param_filters.append(f)
+                    except Exception:
+                        continue
+            else:
+                # fallback: extrai WHERE do SQL
+                where_txt = extrair_where_do_sql(sql)
+                if where_txt:
+                    for linha in where_txt.splitlines():
+                        self._param_filters.append([linha.strip(), [], None, "AND"])
+
+            self._refresh_filters_list()
+
+        except Exception:
+            logging.exception("Falha ao restaurar filtros WHERE")
+
+        # ==========================
+        # FIM DO LOAD
+        # ==========================
+        self._loading_query = False
+
+
+        # ==========================
+        # LOG
+        # ==========================
+        try:
+            if getattr(self, 'session_logger', None):
+                self.session_logger.log(
+                    'load_query',
+                    f"Carregou consulta '{query.name}'",
+                    {'name': query.name}
+                )
+        except Exception:
+            pass
+        # NOTE: filtros já foram restaurados acima. Não reatribuir aqui —
+        # re-popularia `_param_filters` novamente e poderia acionar a
+        # regeneração de SQL (generate_sql_manual) limpando o WHERE mostrado.
+        # A restauração correta é feita no bloco anterior e já chamou
+        # `_refresh_filters_list()` enquanto `_loading_query` estava True.
+        
+
+        
     def delete_query(self):
         """Exclui uma consulta (prompt simples) via QueryBuilderTab."""
         try:

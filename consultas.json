@@ -1,7 +1,7 @@
 {
   "Vendas 12/2025": {
     "name": "Vendas 12/2025",
-    "sql": "SELECT\n            FORMAT(cns.DataMovimento, 'yyyy-MM') AS MesAno, cns.CodVendedor, cns.CodCliente, cns.CodProduto, cns.CodRegiao, cns.NomeEmpresa, SUM(cns.TotalProduto) AS [TotalProduto], SUM(cns.Quantidade) AS [Quantidade]\n        FROM [dbo].[CnsVendasRefPeriodo] cns\n        \nINNER JOIN [dbo].[Clientes] cli ON cns.CodCliente = cli.CodCliente\nINNER JOIN [dbo].[Vendedores] ven ON cns.CodVendedor = ven.CodVendedor\nINNER JOIN [dbo].[Produtos] pro ON cns.CodProduto = pro.CodProduto\nINNER JOIN [dbo].[Empresas] emp ON cns.CodEmpresa = emp.CodEmpresa\nINNER JOIN [dbo].[Regioes] reg ON cns.CodRegiao = reg.CodRegiao\nINNER JOIN [dbo].[GrupoEstoque] gru ON cns.CodGrupo = gru.CodGrupo\nWHERE DataMovimento >= '12-01-2025'\nGROUP BY FORMAT(cns.DataMovimento, 'yyyy-MM'), cns.CodVendedor, cns.CodCliente, cns.CodProduto, cns.CodRegiao, cns.NomeEmpresa",
+    "sql": "SELECT\n            FORMAT(cns.DataMovimento, 'yyyy-MM') AS MesAno, cns.CodVendedor, cns.CodCliente, cns.CodProduto, cns.CodRegiao, cns.NomeEmpresa, SUM(cns.TotalProduto) AS [TotalProduto], SUM(cns.Quantidade) AS [Quantidade]\n        FROM [dbo].[CnsVendasRefPeriodo] cns\n\nINNER JOIN [dbo].[Clientes] cli ON cns.CodCliente = cli.CodCliente\nINNER JOIN [dbo].[Vendedores] ven ON cns.CodVendedor = ven.CodVendedor\nINNER JOIN [dbo].[Produtos] pro ON cns.CodProduto = pro.CodProduto\nINNER JOIN [dbo].[Empresas] emp ON cns.CodEmpresa = emp.CodEmpresa\nINNER JOIN [dbo].[Regioes] reg ON cns.CodRegiao = reg.CodRegiao\nINNER JOIN [dbo].[GrupoEstoque] gru ON cns.CodGrupo = gru.CodGrupo\nWHERE DataMovimento >= '12-01-2025'\nGROUP BY FORMAT(cns.DataMovimento, 'yyyy-MM'), cns.CodVendedor, cns.CodCliente, cns.CodProduto, cns.CodRegiao, cns.NomeEmpresa",
     "description": "",
     "created_at": "2025-12-29 17:43:51",
     "modified_at": "2025-12-29 17:43:51",
@@ -13,6 +13,11 @@
   "A pagar": {
     "name": "A pagar",
     "sql": "SELECT\n    aPagar.DataEmissao,\n    aPagar.CodEmpresa,\n    aPagar.Numero,\n    aPagar.Desdobramento FROM [dbo].[aPagar]\n    WHERE [dbo].[aPagar].[DataEmissao] >= '12-1-2025'",
+    "ui_state": {
+      "filters": [
+        ["[dbo].[aPagar].[DataEmissao] >= '12-1-2025'", [], null, "AND"]
+      ]
+    },
     "description": "",
     "created_at": "2026-01-02 13:06:07",
     "modified_at": "2026-01-02 13:06:07",

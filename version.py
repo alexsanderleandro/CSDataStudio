@@ -1,4 +1,4 @@
-VERSION = "26.01.02 rev. 6"
+VERSION = "26.03.26 rev. 2"
 
 # Nome amigável do aplicativo e da companhia
 APP_NAME = "CSData Studio"
@@ -15,6 +15,12 @@ class Version:
 	@staticmethod
 	def get_version() -> str:
 		return VERSION
+
+	@staticmethod
+	def get_full_name() -> str:
+		from version import APP_NAME
+		# Formato amigável: "<APP_NAME> v<version>"
+		return f"{APP_NAME} v{Version.get_version()}"
 
 	def __str__(self) -> str:
 		return VERSION
